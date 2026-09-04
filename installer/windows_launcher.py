@@ -15,6 +15,20 @@ APP_URL = "http://127.0.0.1:8000"
 HEALTH_URL = f"{APP_URL}/api/health"
 
 
+def _ensure_stdio() -> None:
+    """Provide streams for libraries when running as a windowed PyInstaller app.
+
+    PyInstaller ``console=False`` may leave ``sys.stdout``/``sys.stderr`` as
+    ``None``. Uvicorn's default logging formatter expects a real stream and can
+    otherwise fail during startup with ``Unable to configure formatter
+    'default'``. Point missing streams at the Windows null device.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def _health_ok(timeout: float = 0.5) -> bool:
     try:
         with urllib.request.urlopen(HEALTH_URL, timeout=timeout) as response:
@@ -31,8 +45,25 @@ def _port_in_use(host: str = "127.0.0.1", port: int = 8000) -> bool:
         return False
 
 
+def _make_uvicorn_config(app, port: int):
+    import uvicorn
+
+    # Do not install Uvicorn's console-oriented default formatter in the
+    # windowed executable. Application logging can still use existing loggers,
+    # but startup no longer depends on a console stream being present.
+    return uvicorn.Config(
+        app=app,
+        host="127.0.0.1",
+        port=port,
+        log_level="warning",
+        access_log=False,
+        log_config=None,
+    )
+
+
 def _run_self_test() -> int:
     try:
+        _ensure_stdio()
         from app.core.runtime import ensure_runtime_dirs, frontend_dist_dir, user_data_root
 
         ensure_runtime_dirs()
@@ -40,6 +71,7 @@ def _run_self_test() -> int:
         if not index.exists():
             return 11
 
+        from app.core.config import settings
         from app.db.database import engine
         from app.main import app
 
@@ -53,6 +85,12 @@ def _run_self_test() -> int:
             return 13
         if not user_data_root().exists():
             return 14
+
+        # Exercise the same Uvicorn configuration used by the GUI startup.
+        # This catches formatter/console regressions in the packaged binary.
+        config = _make_uvicorn_config(app, settings.backend_port)
+        if config.log_config is not None:
+            return 15
         return 0
     except Exception:
         return 99
@@ -69,6 +107,8 @@ def _open_when_ready(root, status_var) -> None:
 
 
 def _run_gui() -> int:
+    _ensure_stdio()
+
     import tkinter as tk
     from tkinter import messagebox
 
@@ -93,13 +133,7 @@ def _run_gui() -> int:
     from app.main import app
     import uvicorn
 
-    config = uvicorn.Config(
-        app=app,
-        host="127.0.0.1",
-        port=settings.backend_port,
-        log_level="warning",
-        access_log=False,
-    )
+    config = _make_uvicorn_config(app, settings.backend_port)
     server = uvicorn.Server(config)
     server.install_signal_handlers = lambda: None
 
@@ -154,6 +188,7 @@ def _run_gui() -> int:
 
 
 def main() -> int:
+    _ensure_stdio()
     if "--self-test" in sys.argv:
         return _run_self_test()
     try:
