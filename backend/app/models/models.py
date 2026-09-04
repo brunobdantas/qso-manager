@@ -181,7 +181,7 @@ class NormalizedQSO(Base):
     time_on = Column(String(8))  # HH:MM:SS
     time_off = Column(String(8))
     band = Column(String(10), index=True)
-    freq = Column(Float)
+    freq_hz = Column(Integer)  # Frequency in Hz (ADIF FREQ in MHz * 1000000)
     mode = Column(String(20))
     submode = Column(String(20))
     rst_sent = Column(String(5))
@@ -242,7 +242,7 @@ class LogicalQSO(Base):
     time_on = Column(String(8))
     time_off = Column(String(8))
     band = Column(String(10))
-    freq = Column(Float)
+    freq_hz = Column(Integer)  # Frequency in Hz
     mode = Column(String(20))
     submode = Column(String(20))
     operating_mode = Column(String(20))

@@ -1,8 +1,13 @@
 from sqlalchemy import create_engine
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import sessionmaker
-from .config import settings
 import os
+import sys
+
+# Add backend to path for proper imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+from app.core.config import settings
 
 # Ensure data directory exists
 os.makedirs(os.path.dirname("data/"), exist_ok=True)

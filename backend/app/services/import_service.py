@@ -65,10 +65,12 @@ class ADIFImportService:
             # Compute file hash
             file_hash = hashlib.sha256(content.encode()).hexdigest()
             
-            # Check if file already imported
-            existing_file = self.db.query(ImportFile).filter(
+            # Check if file already imported - use join instead of .has()
+            existing_file = self.db.query(ImportFile).join(
+                Import, ImportFile.import_id == Import.id
+            ).filter(
                 ImportFile.file_hash == file_hash,
-                ImportFile.import_id.has(source_id=source.id)
+                Import.source_id == source.id
             ).first()
             
             already_imported = existing_file is not None
@@ -233,6 +235,10 @@ class ADIFImportService:
         submode = record.get('SUBMODE', '')
         operating_mode, mode_family = self.parser.classify_mode(mode, submode)
         
+        # Convert frequency from MHz (ADIF) to Hz for storage
+        freq_mhz = record.get('FREQ')
+        freq_hz = int(float(freq_mhz) * 1_000_000) if freq_mhz else None
+        
         return NormalizedQSO(
             raw_qso_id=raw_qso_id,
             source_id=source_id,
@@ -241,7 +247,7 @@ class ADIFImportService:
             time_on=record.get('TIME_ON'),
             time_off=record.get('TIME_OFF'),
             band=record.get('BAND'),
-            freq=record.get('FREQ'),
+            freq_hz=freq_hz,
             mode=mode.upper() if mode else None,
             submode=submode.upper() if submode else None,
             rst_sent=record.get('RST_SENT'),

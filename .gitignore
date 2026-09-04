@@ -20,43 +20,42 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
+MANIFEST
 
-# Virtual Environment
+# Virtual environments
 venv/
 ENV/
-env/
-.venv/
 env.bak/
-venv.bak/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.coverage.*
-
-# Logs
-logs/
-
-# Environment variables
-.env
-.env.local
-.env.*
-!.env.example
+.venv/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
-*.tmp
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+
+# Database
+*.sqlite
+*.db
 
 # OS
 .DS_Store
 Thumbs.db
-
-# Backups and exports
-backups/
-exports/
-imports/
 ```
