@@ -61,8 +61,8 @@ jobs:
         env:
           QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-self-test
         run: |
-          & ".\dist\PU2BRU-QSO-Manager.exe" --self-test
-          if ($LASTEXITCODE -ne 0) { throw "Packaged self-test failed with exit code $LASTEXITCODE" }
+          $process = Start-Process -FilePath ".\dist\PU2BRU-QSO-Manager.exe" -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Packaged self-test failed with exit code $($process.ExitCode)" }
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
           if (-not (Test-Path $db)) { throw "Packaged database was not created in persistent data directory" }
 
