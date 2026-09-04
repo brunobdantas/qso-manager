@@ -168,9 +168,17 @@ class ReconciliationEngine:
     ):
         """Process a group of QSOs with same callsign and date.
         
-        Uses union-find algorithm to properly cluster QSOs from multiple sources
-        into logical QSOs, ensuring each NormalizedQSO belongs to exactly one
-        LogicalQSO.
+        Uses COMPLETE-LINK clustering to properly handle:
+        1. TIME_ON absent with multiple candidates - no auto-merge bridge
+        2. Transitivity validation - A-B match + B-C match does NOT imply A-C match
+           if A-C would be REVISAO_MANUAL or level E
+        
+        Key rule: A QSO can only join an auto-match cluster if it is AUTO_MATCH
+        compatible with ALL existing members of that cluster.
+        
+        Special handling for TIME_ON absent:
+        - If a QSO lacks TIME_ON and there are multiple time-separated candidates,
+          the no-time QSO cannot auto-merge with any of them.
         """
         if len(qsos) == 1:
             # Single QSO - create logical QSO directly
@@ -180,22 +188,20 @@ class ReconciliationEngine:
         # Check for real duplicates within same source
         self._detect_real_duplicates(qsos)
         
-        # Build match graph using union-find
+        # Build complete match matrix
         n = len(qsos)
-        parent = list(range(n))
+        match_matrix: Dict[Tuple[int, int], MatchCandidate] = {}
         
-        def find(x):
-            if parent[x] != x:
-                parent[x] = find(parent[x])
-            return parent[x]
+        # Track QSOs without time and those with time
+        no_time_indices: Set[int] = set()
+        has_time_indices: Set[int] = set()
         
-        def union(x, y):
-            px, py = find(x), find(y)
-            if px != py:
-                parent[px] = py
+        for i, qso in enumerate(qsos):
+            if qso.has_time:
+                has_time_indices.add(i)
+            else:
+                no_time_indices.add(i)
         
-        # Find all valid matches between different sources
-        match_graph = []  # List of (i, j, candidate)
         for i, qso1 in enumerate(qsos):
             for j, qso2 in enumerate(qsos[i + 1:], i + 1):
                 # Skip if same source (already handled by duplicate detection)
@@ -205,24 +211,114 @@ class ReconciliationEngine:
                 candidate = self._evaluate_match(qso1, qso2)
                 if candidate:
                     self.matches.append(candidate)
-                    match_graph.append((i, j, candidate))
+                    match_matrix[(i, j)] = candidate
+                    match_matrix[(j, i)] = candidate
+        
+        # SPECIAL RULE: If a no-time QSO has multiple candidates with time
+        # that are temporally incompatible (>5 min apart), mark all its matches
+        # as requiring manual review
+        blocked_no_time_matches: Set[Tuple[int, int]] = set()
+        
+        for no_time_idx in no_time_indices:
+            # Find all candidates with time that could match this no-time QSO
+            compatible_with_time: List[int] = []
+            for time_idx in has_time_indices:
+                key = (no_time_idx, time_idx) if no_time_idx < time_idx else (time_idx, no_time_idx)
+                if key in match_matrix:
+                    cand = match_matrix[key]
+                    if cand.match_level in (MatchLevel.A, MatchLevel.B) and not cand.blocking_reasons:
+                        compatible_with_time.append(time_idx)
+            
+            # If there are 2+ time-separated candidates, block auto-merge
+            if len(compatible_with_time) >= 2:
+                # Check if these candidates are temporally separated
+                times_are_separated = False
+                for idx1 in range(len(compatible_with_time)):
+                    for idx2 in range(idx1 + 1, len(compatible_with_time)):
+                        t1 = qsos[compatible_with_time[idx1]].time_seconds
+                        t2 = qsos[compatible_with_time[idx2]].time_seconds
+                        if t1 is not None and t2 is not None:
+                            if abs(t1 - t2) > self.TIME_REVIEW_THRESHOLD:
+                                times_are_separated = True
+                                break
+                    if times_are_separated:
+                        break
+                
+                if times_are_separated:
+                    # Block all auto-matches involving this no-time QSO
+                    for time_idx in compatible_with_time:
+                        key = (no_time_idx, time_idx) if no_time_idx < time_idx else (time_idx, no_time_idx)
+                        blocked_no_time_matches.add(key)
+                        # Update the match candidate to require manual review
+                        if key in match_matrix:
+                            old_cand = match_matrix[key]
+                            new_cand = MatchCandidate(
+                                qso1_id=old_cand.qso1_id,
+                                qso2_id=old_cand.qso2_id,
+                                match_level=MatchLevel.E,
+                                match_status=MatchStatus.REVISAO_MANUAL,
+                                score=old_cand.score,
+                                time_diff_seconds=old_cand.time_diff_seconds,
+                                freq_diff=old_cand.freq_diff,
+                                reasoning=old_cand.reasoning + ["TIME_ON absent with multiple time-separated candidates"],
+                                blocking_reasons=["Multiple plausible candidates exist with incompatible times"]
+                            )
+                            match_matrix[key] = new_cand
+                            match_matrix[(key[1], key[0])] = new_cand
+                            
+                            # Also update in self.matches list
+                            for idx, m in enumerate(self.matches):
+                                if (m.qso1_id == new_cand.qso1_id and m.qso2_id == new_cand.qso2_id) or \
+                                   (m.qso1_id == new_cand.qso2_id and m.qso2_id == new_cand.qso1_id):
+                                    self.matches[idx] = new_cand
+        
+        # COMPLETE-LINK clustering: build clusters where ALL pairs are AUTO_MATCH compatible
+        # Use iterative approach: start with singletons, merge only if complete-link condition holds
+        clusters: List[Set[int]] = [{i} for i in range(n)]
+        
+        def can_merge_complete_link(cluster1: Set[int], cluster2: Set[int]) -> bool:
+            """Check if all cross-pairs between clusters are AUTO_MATCH (A or B)."""
+            for i in cluster1:
+                for j in cluster2:
+                    key = (i, j) if i < j else (j, i)
+                    if key not in match_matrix:
+                        return False
+                    cand = match_matrix[key]
+                    # Must be level A or B with no blocking reasons
+                    if cand.match_level not in (MatchLevel.A, MatchLevel.B):
+                        return False
+                    if cand.blocking_reasons:
+                        return False
+                    # Also check if this match was explicitly blocked
+                    if key in blocked_no_time_matches:
+                        return False
+            return True
+        
+        # Iteratively merge clusters using complete-link condition
+        changed = True
+        while changed:
+            changed = False
+            for i in range(len(clusters)):
+                if not clusters[i]:  # Skip empty clusters
+                    continue
+                for j in range(i + 1, len(clusters)):
+                    if not clusters[j]:  # Skip empty clusters
+                        continue
                     
-                    # Union if level A or B and no blocking reasons
-                    if candidate.match_level in (MatchLevel.A, MatchLevel.B) \
-                       and not candidate.blocking_reasons:
-                        union(i, j)
+                    if can_merge_complete_link(clusters[i], clusters[j]):
+                        # Merge cluster j into cluster i
+                        clusters[i] = clusters[i].union(clusters[j])
+                        clusters[j] = set()
+                        changed = True
+                        break
+                if changed:
+                    break
         
-        # Group QSOs by their root parent (cluster)
-        clusters: Dict[int, List[NormalizedQSOData]] = {}
-        for i, qso in enumerate(qsos):
-            root = find(i)
-            if root not in clusters:
-                clusters[root] = []
-            clusters[root].append(qso)
-        
-        # Create logical QSOs for each cluster
-        for cluster_qsos in clusters.values():
-            self._create_logical_qso(cluster_qsos)
+        # Create logical QSOs for each non-empty cluster
+        for cluster in clusters:
+            if cluster:
+                cluster_qsos = [qsos[i] for i in sorted(cluster)]
+                self._create_logical_qso(cluster_qsos)
     
     def _detect_real_duplicates(self, qsos: List[NormalizedQSOData]):
         """Detect real duplicates within the same source.
@@ -275,7 +371,14 @@ class ReconciliationEngine:
         # ========================================
         # CRITICAL: Time-based blocking rules
         # ========================================
-        if qso1.has_time and qso2.has_time:
+        # When BOTH have time and differ by > 5 minutes => REVISAO_MANUAL
+        # When ONE lacks time AND there are multiple candidates => mark for review
+        
+        time_diff = None
+        both_have_time = qso1.has_time and qso2.has_time
+        one_lacks_time = not (qso1.has_time and qso2.has_time) and (qso1.has_time or qso2.has_time)
+        
+        if both_have_time:
             time_diff = abs(qso1.time_seconds - qso2.time_seconds)
             
             if time_diff > self.TIME_REVIEW_THRESHOLD:
@@ -298,6 +401,12 @@ class ReconciliationEngine:
                 blocking_reasons.append(
                     f"Time difference {time_diff}s requires manual review"
                 )
+        
+        # When one lacks time, we cannot auto-merge if the other has a time
+        # that could conflict with another candidate. This is handled at cluster level,
+        # but we flag it here as requiring extra scrutiny.
+        # The actual blocking happens in complete-link clustering when multiple
+        # time-separated candidates exist.
         
         # ========================================
         # Calculate match score
