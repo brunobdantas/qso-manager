@@ -92,9 +92,9 @@ class ADIFParser:
             if self.current_position >= len(self.file_content):
                 break
             
-            # Check for end of record
-            if self.file_content[self.current_position:self.current_position + 4] == '<EOR>':
-                self.current_position += 4
+            # Check for end of record - <EOR> is 5 characters
+            if self.file_content[self.current_position:self.current_position + 5].upper() == '<EOR>':
+                self.current_position += 5
                 return record
             
             # Parse field

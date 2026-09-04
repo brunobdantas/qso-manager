@@ -33,7 +33,7 @@ class NormalizedQSOData:
     qso_date: str  # YYYY-MM-DD
     time_on: Optional[str]  # HH:MM:SS
     band: Optional[str]
-    freq: Optional[float]
+    freq_hz: Optional[int]  # Frequency in Hz
     mode: Optional[str]
     submode: Optional[str]
     operating_mode: Optional[str]
@@ -43,6 +43,13 @@ class NormalizedQSOData:
     grid: Optional[str]
     source_id: int
     source_name: str
+    
+    @property
+    def freq_khz(self) -> Optional[float]:
+        """Convert freq_hz to kHz for comparison."""
+        if self.freq_hz is None:
+            return None
+        return self.freq_hz / 1000.0
     
     @property
     def time_seconds(self) -> Optional[int]:
@@ -158,7 +165,12 @@ class ReconciliationEngine:
         date: str, 
         qsos: List[NormalizedQSOData]
     ):
-        """Process a group of QSOs with same callsign and date."""
+        """Process a group of QSOs with same callsign and date.
+        
+        Uses union-find algorithm to properly cluster QSOs from multiple sources
+        into logical QSOs, ensuring each NormalizedQSO belongs to exactly one
+        LogicalQSO.
+        """
         if len(qsos) == 1:
             # Single QSO - create logical QSO directly
             self._create_logical_qso([qsos[0]])
@@ -167,16 +179,24 @@ class ReconciliationEngine:
         # Check for real duplicates within same source
         self._detect_real_duplicates(qsos)
         
-        # Find matches between different sources
-        matched = set()
+        # Build match graph using union-find
+        n = len(qsos)
+        parent = list(range(n))
+        
+        def find(x):
+            if parent[x] != x:
+                parent[x] = find(parent[x])
+            return parent[x]
+        
+        def union(x, y):
+            px, py = find(x), find(y)
+            if px != py:
+                parent[px] = py
+        
+        # Find all valid matches between different sources
+        match_graph = []  # List of (i, j, candidate)
         for i, qso1 in enumerate(qsos):
-            if i in matched:
-                continue
-            
             for j, qso2 in enumerate(qsos[i + 1:], i + 1):
-                if j in matched:
-                    continue
-                
                 # Skip if same source (already handled by duplicate detection)
                 if qso1.source_id == qso2.source_id:
                     continue
@@ -184,44 +204,64 @@ class ReconciliationEngine:
                 candidate = self._evaluate_match(qso1, qso2)
                 if candidate:
                     self.matches.append(candidate)
+                    match_graph.append((i, j, candidate))
                     
-                    # Only auto-merge if level A or B and no blocking reasons
+                    # Union if level A or B and no blocking reasons
                     if candidate.match_level in (MatchLevel.A, MatchLevel.B) \
                        and not candidate.blocking_reasons:
-                        matched.add(i)
-                        matched.add(j)
-                        self._create_logical_qso([qso1, qso2], candidate)
+                        union(i, j)
         
-        # Create logical QSOs for unmatched QSOs
+        # Group QSOs by their root parent (cluster)
+        clusters: Dict[int, List[NormalizedQSOData]] = {}
         for i, qso in enumerate(qsos):
-            if i not in matched:
-                self._create_logical_qso([qso])
+            root = find(i)
+            if root not in clusters:
+                clusters[root] = []
+            clusters[root].append(qso)
+        
+        # Create logical QSOs for each cluster
+        for cluster_qsos in clusters.values():
+            self._create_logical_qso(cluster_qsos)
     
     def _detect_real_duplicates(self, qsos: List[NormalizedQSOData]):
-        """Detect real duplicates within the same source."""
-        seen: Dict[str, List[NormalizedQSOData]] = {}
+        """Detect real duplicates within the same source.
         
+        CRITICAL: Only mark as REAL_DUPLICATE if duplicates are from SAME source.
+        QSOs from different sources (QRZ vs WRL) with same data are NOT duplicates -
+        they are the same QSO observed in multiple sources.
+        """
+        # Group by source first
+        by_source: Dict[int, List[NormalizedQSOData]] = {}
         for qso in qsos:
-            # Fingerprint based on time if available, otherwise mode/band
-            if qso.has_time:
-                key = f"{qso.time_on}|{qso.band}|{qso.mode}"
-            else:
-                key = f"{qso.band}|{qso.mode}|{qso.grid}"
-            
-            if key not in seen:
-                seen[key] = []
-            seen[key].append(qso)
+            if qso.source_id not in by_source:
+                by_source[qso.source_id] = []
+            by_source[qso.source_id].append(qso)
         
-        # Report duplicates
-        for key, duplicates in seen.items():
-            if len(duplicates) > 1:
-                self.duplicates.append({
-                    'type': DuplicateType.REAL_DUPLICATE,
-                    'source_id': duplicates[0].source_id,
-                    'qso_ids': [q.id for q in duplicates],
-                    'description': f"Duplicate QSOs: {duplicates[0].callsign} "
-                                   f"on {duplicates[0].qso_date}"
-                })
+        # Check for duplicates within each source
+        for source_id, source_qsos in by_source.items():
+            seen: Dict[str, List[NormalizedQSOData]] = {}
+            
+            for qso in source_qsos:
+                # Fingerprint based on time if available, otherwise mode/band
+                if qso.has_time:
+                    key = f"{qso.time_on}|{qso.band}|{qso.mode}"
+                else:
+                    key = f"{qso.band}|{qso.mode}|{qso.grid}"
+                
+                if key not in seen:
+                    seen[key] = []
+                seen[key].append(qso)
+            
+            # Report duplicates only within this source
+            for key, duplicates in seen.items():
+                if len(duplicates) > 1:
+                    self.duplicates.append({
+                        'type': DuplicateType.REAL_DUPLICATE,
+                        'source_id': source_id,
+                        'qso_ids': [q.id for q in duplicates],
+                        'description': f"Duplicate QSOs: {duplicates[0].callsign} "
+                                       f"on {duplicates[0].qso_date}"
+                    })
     
     def _evaluate_match(
         self, qso1: NormalizedQSOData, qso2: NormalizedQSOData

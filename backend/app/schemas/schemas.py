@@ -164,7 +164,7 @@ class NormalizedQSOBase(BaseModel):
     time_on: Optional[str] = None
     time_off: Optional[str] = None
     band: Optional[str] = None
-    freq: Optional[float] = None
+    freq_hz: Optional[int] = None  # Frequency in Hz
     mode: Optional[str] = None
     submode: Optional[str] = None
     rst_sent: Optional[str] = None
@@ -205,7 +205,7 @@ class LogicalQSOBase(BaseModel):
     time_on: Optional[str] = None
     time_off: Optional[str] = None
     band: Optional[str] = None
-    freq: Optional[float] = None
+    freq_hz: Optional[int] = None  # Frequency in Hz
     mode: Optional[str] = None
     submode: Optional[str] = None
     operating_mode: Optional[str] = None
