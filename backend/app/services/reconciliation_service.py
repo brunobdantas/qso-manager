@@ -26,6 +26,9 @@ class ReconciliationService:
         Run reconciliation on all normalized QSOs.
         
         Returns summary of reconciliation results.
+        
+        IDEMPOTENCY: Uses atomic rebuild of active view (LogicalQSO, QSOSourceLink, Divergence).
+        Historical data (ReconciliationRun, ReconciliationMatch, AuditEvent) is preserved.
         """
         # Create reconciliation run record
         run = ReconciliationRun(
@@ -64,14 +67,12 @@ class ReconciliationService:
             # Run reconciliation engine
             result = self.engine.reconcile(qso_data)
             
-            # Save matches to database
+            # Save matches to database (historical - never cleaned)
             self._save_matches(run.id, result.matches)
             
-            # Save logical QSOs
-            self._save_logical_qsos(result.logical_qsos)
-            
-            # Save divergences
-            self._save_divergences(result.divergences)
+            # ATOMIC REBUILD OF ACTIVE VIEW
+            # Within a single transaction, replace the entire active view
+            self._atomic_rebuild_active_view(result)
             
             # Update run record
             run.status = "completed"
@@ -124,32 +125,39 @@ class ReconciliationService:
             )
             self.db.add(db_match)
     
-    def _save_logical_qsos(self, logical_qsos: List[Dict[str, Any]]):
-        """Save logical QSOs to database using atomic rebuild of active view.
+    def _atomic_rebuild_active_view(self, result: ReconciliationResult):
+        """
+        Atomically rebuild the active view (LogicalQSO, QSOSourceLink, Divergence).
         
-        IDEMPOTENCY: Uses cluster_fingerprint (SHA256 of sorted normalized_qso_ids)
-        to ensure the same cluster always produces the same LogicalQSO UUID.
-        This prevents creating duplicate LogicalQSOs on repeated reconciliation runs.
+        This ensures idempotency: after each reconciliation run, the active view
+        reflects exactly the current state of normalized QSOs, without duplicates
+        from previous runs.
+        
+        Historical data (ReconciliationRun, ReconciliationMatch, AuditEvent) is preserved.
         """
         import hashlib
         
-        for lq in logical_qsos:
+        # Step 1: Delete all current active view records
+        # Delete divergences first (they reference LogicalQSO)
+        self.db.query(Divergence).delete()
+        
+        # Delete source links (they reference LogicalQSO)
+        self.db.query(QSOSourceLink).delete()
+        
+        # Delete logical QSOs
+        self.db.query(LogicalQSO).delete()
+        
+        # Flush to ensure deletes are applied
+        self.db.flush()
+        
+        # Step 2: Recreate LogicalQSOs and QSOSourceLinks from result
+        for lq in result.logical_qsos:
             # Compute stable cluster fingerprint from sorted normalized QSO IDs
             sorted_qso_ids = sorted([link['normalized_qso_id'] for link in lq.get('source_links', [])])
             fingerprint_input = "|".join(str(id_) for id_ in sorted_qso_ids)
             cluster_fingerprint = hashlib.sha256(fingerprint_input.encode()).hexdigest()
             
-            # Check if logical QSO already exists (by UUID which is now deterministic)
-            existing = self.db.query(LogicalQSO).filter(
-                LogicalQSO.uuid == lq['uuid']
-            ).first()
-            
-            if existing:
-                # Already exists - skip creation but ensure source links exist
-                self._ensure_source_links(existing.id, lq.get('source_links', []))
-                continue
-            
-            # Create logical QSO
+            # Create logical QSO with deterministic UUID based on cluster fingerprint
             logical_qso = LogicalQSO(
                 uuid=lq['uuid'],
                 callsign=lq['callsign'],
@@ -178,7 +186,7 @@ class ReconciliationService:
                 field_provenance=lq.get('field_provenance'),
                 status=lq.get('status', 'reconciled'),
                 divergence_count=len([
-                    d for d in self.engine.divergences 
+                    d for d in result.divergences 
                     if d.get('logical_qso_uuid') == lq['uuid']
                 ]),
             )
@@ -186,47 +194,32 @@ class ReconciliationService:
             self.db.flush()
             
             # Create source links
-            self._ensure_source_links(logical_qso.id, lq.get('source_links', []))
-    
-    def _ensure_source_links(self, logical_qso_id: int, source_links: List[Dict[str, Any]]):
-        """Ensure source links exist for a logical QSO (idempotent)."""
-        for link_data in source_links:
-            # Check if link already exists
-            existing_link = self.db.query(QSOSourceLink).filter(
-                QSOSourceLink.logical_qso_id == logical_qso_id,
-                QSOSourceLink.normalized_qso_id == link_data['normalized_qso_id']
-            ).first()
-            
-            if existing_link:
-                continue
-            
-            # Find the normalized QSO
-            norm_qso = self.db.query(NormalizedQSO).filter(
-                NormalizedQSO.id == link_data['normalized_qso_id']
-            ).first()
-            
-            if norm_qso:
-                # Determine match level based on number of sources
-                num_sources = len(source_links)
-                if num_sources == 1:
-                    match_level = MatchLevel.A
-                    match_status = MatchStatus.CONFIRMED
-                else:
-                    match_level = MatchLevel.B
-                    match_status = MatchStatus.AUTO_MATCHED
+            for link_data in lq.get('source_links', []):
+                norm_qso = self.db.query(NormalizedQSO).filter(
+                    NormalizedQSO.id == link_data['normalized_qso_id']
+                ).first()
                 
-                link = QSOSourceLink(
-                    logical_qso_id=logical_qso_id,
-                    normalized_qso_id=norm_qso.id,
-                    match_level=match_level,
-                    match_status=match_status,
-                    match_score=1.0,
-                )
-                self.db.add(link)
-    
-    def _save_divergences(self, divergences: List[Dict[str, Any]]):
-        """Save divergences to database."""
-        for div in divergences:
+                if norm_qso:
+                    # Determine match level based on number of sources
+                    num_sources = len(lq.get('source_links', []))
+                    if num_sources == 1:
+                        match_level = MatchLevel.A
+                        match_status = MatchStatus.CONFIRMED
+                    else:
+                        match_level = MatchLevel.B
+                        match_status = MatchStatus.AUTO_MATCHED
+                    
+                    link = QSOSourceLink(
+                        logical_qso_id=logical_qso.id,
+                        normalized_qso_id=norm_qso.id,
+                        match_level=match_level,
+                        match_status=match_status,
+                        match_score=1.0,
+                    )
+                    self.db.add(link)
+        
+        # Step 3: Recreate divergences
+        for div in result.divergences:
             # Find logical QSO by UUID
             logical_qso = self.db.query(LogicalQSO).filter(
                 LogicalQSO.uuid == div.get('logical_qso_uuid')
