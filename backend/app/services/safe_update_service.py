@@ -1,181 +1,153 @@
-"""Safe Update Service - Build safe update previews for LogicalQSO."""
+"""Safe, UUID-targeted updates for the materialized LogicalQSO view.
 
-from typing import Dict, Any, Optional, List
+Human changes are persisted against QSOIdentity so reconciliation can rebuild the
+materialized view without losing user decisions.
+"""
+from __future__ import annotations
+
+import json
 from datetime import datetime
+from typing import Any, Dict, Optional
+
 from sqlalchemy.orm import Session
 
-from ..models.models import LogicalQSO
+from ..models.models import (
+    AuditEvent,
+    AuditOperation,
+    LogicalQSO,
+    LogicalQSOFieldOverride,
+)
 
 
 class SafeUpdateService:
-    """Service for building safe update previews for LogicalQSO records.
-    
-    Key principle: Build a preview of changes without persisting,
-    ensuring all non-targeted fields remain identical.
-    """
-    
-    # Allowlist of fields that can be edited
     EDITABLE_FIELDS = {
-        'callsign', 'qso_date', 'time_on', 'time_off', 'band', 
-        'freq_hz', 'mode', 'submode', 'operating_mode', 'mode_family',
-        'rst_sent', 'rst_rcvd', 'grid', 'dxcc', 'country', 'state', 
-        'county', 'cqz', 'ituz', 'continent', 'iota', 'comment',
-        'confirmations', 'field_provenance', 'status', 'divergence_count'
+        "callsign", "qso_date", "time_on", "time_off", "band",
+        "freq_hz", "mode", "submode", "operating_mode", "mode_family",
+        "rst_sent", "rst_rcvd", "grid", "dxcc", "country", "state",
+        "county", "cqz", "ituz", "continent", "iota", "comment",
+        "confirmations", "field_provenance", "status", "divergence_count",
     }
-    
-    # Fields that can NEVER be changed via update
-    PROTECTED_FIELDS = {'id', 'uuid', 'created_at', 'updated_at'}
-    
+    PROTECTED_FIELDS = {"id", "uuid", "qso_identity_id", "created_at", "updated_at"}
+
     def __init__(self, db: Session):
         self.db = db
-    
+
     def _validate_changes(self, changes: Dict[str, Any]) -> None:
-        """Validate that changes only contain editable fields.
-        
-        Args:
-            changes: Dictionary of field changes to validate
-            
-        Raises:
-            ValueError: If any protected or unknown fields are present
-        """
-        change_keys = set(changes.keys())
-        
-        # Check for protected fields first
-        protected_found = change_keys & self.PROTECTED_FIELDS
-        if protected_found:
+        change_keys = set(changes)
+        protected = change_keys & self.PROTECTED_FIELDS
+        if protected:
             raise ValueError(
-                f"Cannot modify protected fields: {sorted(protected_found)}. "
+                f"Cannot modify protected fields: {sorted(protected)}. "
                 f"Protected fields are: {sorted(self.PROTECTED_FIELDS)}"
             )
-        
-        # Check for unknown fields (not in EDITABLE_FIELDS and not model fields)
-        all_model_fields = {c.name for c in LogicalQSO.__table__.columns}
-        unknown_found = change_keys - self.EDITABLE_FIELDS - all_model_fields
-        
-        if unknown_found:
+        invalid = change_keys - self.EDITABLE_FIELDS
+        if invalid:
             raise ValueError(
-                f"Cannot modify unknown/invalid fields: {sorted(unknown_found)}. "
+                f"Cannot modify unknown/invalid fields: {sorted(invalid)}. "
                 f"Editable fields are: {sorted(self.EDITABLE_FIELDS)}"
             )
-    
+
+    @staticmethod
+    def _json_value(value: Any) -> str:
+        return json.dumps(value, ensure_ascii=False, default=str)
+
     def build_safe_update(
-        self, 
-        qso_uuid: str, 
-        changes: Dict[str, Any], 
-        reason: str
+        self,
+        qso_uuid: str,
+        changes: Dict[str, Any],
+        reason: str,
     ) -> Optional[Dict[str, Any]]:
-        """Build a safe update preview for a specific LogicalQSO by its UUID.
-        
-        Args:
-            qso_uuid: The UUID of the LogicalQSO to update (string)
-            changes: Dictionary of field changes to apply
-            reason: Reason for the update
-            
-        Returns:
-            Dictionary containing:
-            - qso_uuid: The UUID of the QSO
-            - before: Current state of all fields
-            - after: Projected state after changes
-            - changed_fields: List of fields that will change
-            - preserved_fields: List of fields that remain unchanged
-            - reason: Reason for the update
-            
-            Returns None if QSO not found.
-            
-        Raises:
-            ValueError: If changes contain protected or unknown fields
-        """
-        # Validate changes FIRST - reject protected/unknown fields explicitly
         self._validate_changes(changes)
-        
-        # Query by UUID, not by integer id
         qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
-        
         if qso is None:
             return None
-        
-        # Get all model fields
-        all_fields = [c.name for c in LogicalQSO.__table__.columns]
-        
-        # Build 'before' state
-        before = {}
+
+        all_fields = [column.name for column in LogicalQSO.__table__.columns]
+        before: Dict[str, Any] = {}
         for field in all_fields:
             value = getattr(qso, field, None)
-            # Convert non-serializable types
             if isinstance(value, datetime):
                 value = value.isoformat()
             before[field] = value
-        
-        # Filter changes: only allow editable fields
-        safe_changes = {
-            k: v for k, v in changes.items()
-            if k in self.EDITABLE_FIELDS
-        }
-        
-        # Build 'after' state by cloning before and applying safe changes
+
         after = before.copy()
         changed_fields = []
-        
-        for field, new_value in safe_changes.items():
-            if field in all_fields:
-                old_value = before.get(field)
-                if old_value != new_value:
-                    after[field] = new_value
-                    changed_fields.append(field)
-        
-        # Determine preserved fields (all fields not being changed)
-        preserved_fields = [f for f in all_fields if f not in changed_fields]
-        
+        for field, value in changes.items():
+            if before.get(field) != value:
+                after[field] = value
+                changed_fields.append(field)
+
         return {
-            "qso_uuid": getattr(qso, 'uuid', qso_uuid),
+            "qso_uuid": qso.uuid,
             "qso_id": qso.id,
+            "qso_identity_id": qso.qso_identity_id,
             "before": before,
             "after": after,
             "changed_fields": changed_fields,
-            "preserved_fields": preserved_fields,
+            "preserved_fields": [f for f in all_fields if f not in changed_fields],
             "reason": reason,
         }
-    
+
     def apply_safe_update(
         self,
         qso_uuid: str,
         changes: Dict[str, Any],
-        reason: str
+        reason: str,
     ) -> Optional[LogicalQSO]:
-        """Apply a safe update to a LogicalQSO by UUID.
-        
-        Args:
-            qso_uuid: The UUID of the LogicalQSO to update (string)
-            changes: Dictionary of field changes to apply
-            reason: Reason for the update
-            
-        Returns:
-            Updated LogicalQSO or None if not found
-            
-        Raises:
-            ValueError: If changes contain protected or unknown fields
-        """
-        # Validate changes FIRST - reject protected/unknown fields explicitly
         self._validate_changes(changes)
-        
-        # Query by UUID, not by integer id
         qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
-        
         if qso is None:
             return None
-        
-        # Filter changes: only allow editable fields, never protected fields
-        safe_changes = {
-            k: v for k, v in changes.items()
-            if k in self.EDITABLE_FIELDS and k not in self.PROTECTED_FIELDS
-        }
-        
-        # Apply only the specified changes
-        for field, value in safe_changes.items():
-            if hasattr(qso, field):
-                setattr(qso, field, value)
-        
+
+        before = {field: getattr(qso, field, None) for field in changes}
+        applied: Dict[str, Any] = {}
+
+        for field, value in changes.items():
+            old_value = getattr(qso, field)
+            if old_value == value:
+                continue
+
+            # Persist human intent against the stable identity. Legacy/unit-test
+            # LogicalQSOs without an identity remain editable but cannot persist
+            # an override across reconciliation.
+            if qso.qso_identity_id is not None:
+                override = self.db.query(LogicalQSOFieldOverride).filter(
+                    LogicalQSOFieldOverride.qso_identity_id == qso.qso_identity_id,
+                    LogicalQSOFieldOverride.field_name == field,
+                    LogicalQSOFieldOverride.is_active.is_(True),
+                ).first()
+                if override is None:
+                    override = LogicalQSOFieldOverride(
+                        qso_identity_id=qso.qso_identity_id,
+                        field_name=field,
+                        original_value=self._json_value(old_value),
+                        override_value=self._json_value(value),
+                        reason=reason,
+                        created_by="manual",
+                        is_active=True,
+                    )
+                    self.db.add(override)
+                else:
+                    override.override_value = self._json_value(value)
+                    override.reason = reason
+                    override.created_by = "manual"
+                    override.is_active = True
+
+            setattr(qso, field, value)
+            applied[field] = value
+
+        if applied:
+            self.db.add(AuditEvent(
+                operation=AuditOperation.UPDATE,
+                entity_type="logical_qso",
+                entity_id=qso.id,
+                source="manual",
+                before={k: before[k] for k in applied},
+                after=applied,
+                reason=reason,
+                result="success",
+            ))
+
         self.db.commit()
         self.db.refresh(qso)
-        
         return qso
