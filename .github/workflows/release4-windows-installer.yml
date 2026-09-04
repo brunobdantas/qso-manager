@@ -41,14 +41,11 @@ jobs:
         working-directory: frontend
         run: npm run build
 
-      - name: Release 1 regression suite
-        run: python acceptance/run_release1_acceptance.py
+      - name: Backend regression suite
+        run: python -m pytest backend/tests -q
 
       - name: Release 2 verification
         run: python scripts/verify_release2.py
-
-      - name: Release 3 integration tests
-        run: python -m pytest backend/tests/test_integrations.py -q
 
       - name: Release 3 verification
         run: python scripts/verify_release3.py
