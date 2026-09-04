@@ -309,6 +309,12 @@ class DivergenceResponse(BaseModel):
         from_attributes = True
 
 
+# Resolve the forward reference used by LogicalQSODetail after
+# DivergenceResponse is defined. This is required on a clean Python process
+# (e.g. GitHub Actions) where import order cannot accidentally resolve it.
+LogicalQSODetail.model_rebuild()
+
+
 class DuplicateGroupResponse(BaseModel):
     id: int
     duplicate_type: DuplicateType
