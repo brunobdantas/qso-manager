@@ -1,8 +1,9 @@
 """Performance wrapper for connected multi-log analysis."""
 from __future__ import annotations
 
-from typing import Optional
+from typing import Dict, Any, Optional
 
+from ..adapters.cloud_logs import CloudProviderError
 from .cloud_hub_service import CloudHubService as BaseCloudHubService
 from .cloud_snapshot_store import CloudSnapshotStore
 from .credential_store import CredentialStore
@@ -37,3 +38,12 @@ class CloudHubService(BaseCloudHubService):
         result["probable_duplicates"] = existing
         result["summary"]["probable_duplicates"] = len(existing)
         return result
+
+    def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False):
+        normalized = dict(changes)
+        if provider.strip().upper() == "WRL" and "FREQ" in normalized:
+            try:
+                normalized["FREQ"] = float(normalized["FREQ"])
+            except (TypeError, ValueError) as exc:
+                raise CloudProviderError("WRL frequency must be a number in MHz") from exc
+        return super().update_remote(provider, index, normalized, confirm)
