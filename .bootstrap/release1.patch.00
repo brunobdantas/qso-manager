@@ -1,0 +1,602 @@
+diff --git a/.github/workflows/release1-acceptance.yml b/.github/workflows/release1-acceptance.yml
+new file mode 100644
+index 0000000000000000000000000000000000000000..3a420572ddd6af8b45c3cd499f79965ff9a7ba92
+--- /dev/null
++++ b/.github/workflows/release1-acceptance.yml
+@@ -0,0 +1,25 @@
++name: Release 1 Acceptance
++
++on:
++  push:
++    branches: [main, release1-backend-core]
++  pull_request:
++    branches: [main]
++
++permissions:
++  contents: read
++
++jobs:
++  backend-acceptance:
++    runs-on: ubuntu-latest
++    steps:
++      - uses: actions/checkout@v4
++      - uses: actions/setup-python@v5
++        with:
++          python-version: '3.12'
++          cache: pip
++          cache-dependency-path: backend/requirements.txt
++      - name: Install backend dependencies
++        run: python -m pip install -r backend/requirements.txt
++      - name: Run immutable Release 1 acceptance
++        run: python acceptance/run_release1_acceptance.py
+diff --git a/.gitignore b/.gitignore
+index dd9da4490fc7d2ba878d6b351f466cd352e6cd57..ea57ccbda688488ffee53fd78da1e5e2abd03adf 100644
+--- a/.gitignore
++++ b/.gitignore
+@@ -1,3 +1,34 @@
+-```markdown
+-# No changes needed - only source/config files were added
+-```
+\ No newline at end of file
++.env
++.env.*
++!.env.example
++
++*.db
++*.sqlite
++*.sqlite3
++
++__pycache__/
++*.pyc
++*.pyo
++.pytest_cache/
++
++.venv/
++venv/
++
++node_modules/
++dist/
++build/
++
++backend/data/*
++!backend/data/.gitkeep
++
++backups/*
++!backups/.gitkeep
++
++imports/*
++!imports/.gitkeep
++
++exports/*
++!exports/.gitkeep
++
++logs/*
++!logs/.gitkeep
+diff --git a/MILESTONE1_REPORT.md b/MILESTONE1_REPORT.md
+index a988e215707a00abf9df6f171b5447eaa0bbbda6..4b080ffa061af55d5422d2c6f74bb3ae37a4f27e 100644
+--- a/MILESTONE1_REPORT.md
++++ b/MILESTONE1_REPORT.md
+@@ -1,295 +1,41 @@
+-# PU2BRU QSO Manager — Milestone 1 Report
++# PU2BRU QSO Manager — Release 1 Backend Core
+ 
+-## Executive Summary
++## Resultado
+ 
+-**Status: READY FOR VALIDATION**
++Release 1 backend core validado contra a suíte externa de aceite.
+ 
+-This report documents the completion of Milestone 1 — Backend Core Release Candidate.
++- 60 testes coletados
++- 60 testes aprovados
++- 0 falhas
++- `python acceptance/run_release1_acceptance.py` → `RESULT: PASS`, exit code 0
++- segunda execução consecutiva → PASS
++- suíte também executada com `SAWarning` tratado como erro → PASS
+ 
+----
++## Funcionalidades fechadas
+ 
+-## 1. Test Results
++- identidade persistente `QSOIdentity` separada da visão materializada `LogicalQSO`;
++- identidade preservada após nova reconciliação, entrada de nova fonte e restart;
++- dois QSOs reais do mesmo indicativo no mesmo dia permanecem distintos;
++- override manual persistente por identidade, inclusive após evolução de cluster;
++- resolução humana de divergência persistente por identidade/campo/fontes;
++- `needs_review` aplicado ao QSO específico quando `TIME_ON` ausente gera ambiguidade;
++- update seguro por UUID, sem fallback inseguro para ID inteiro;
++- imports manuais usam `PARTIAL_EXPORT` por padrão;
++- suporte persistente a `coverage_start`, `coverage_end` e `coverage_metadata`;
++- avaliação conservadora de cobertura (`PRESENT`, `MISSING_HIGH_CONFIDENCE`, `INSUFFICIENT_COVERAGE`, `OUT_OF_COVERAGE`);
++- regressão crítica 12:39 protegida, incluindo 20 s, 800 Hz e equivalência MFSK/SUBMODE FT4 × FT4;
++- auditoria de reconciliação persistida na mesma transação do run;
++- parser ADIF, reimportação idempotente, backup JSON/ADI e endpoints principais preservados;
++- `.gitignore` com regras de segurança para bancos, secrets, caches e artefatos locais.
+ 
+-### Pytest Suite
+-- **Total collected:** 34 tests
+-- **Passed:** 34
+-- **Failed:** 0
+-- **Warnings:** 142 (SQLAlchemy identity map warnings during reconciliation rebuild)
++## Arquitetura do núcleo
+ 
+-```
+-======================= 34 passed, 142 warnings in 1.62s =======================
+-```
++`RawQSO -> NormalizedQSO -> QSOIdentity -> LogicalQSO -> QSOSourceLink`
+ 
+-### Verification Script Status
++`LogicalQSOFieldOverride` e `DivergenceResolution` pertencem a `QSOIdentity` e não à visão transitória.
+ 
+-The `scripts/verify_release.py` script validates all critical requirements:
++## Limitações deliberadas deste release
+ 
+-| Check | Status |
+-|-------|--------|
+-| pytest | ✓ PASS |
+-| API health | ✓ PASS |
+-| ADIF import | ⚠ Requires fix (422 error - form data format) |
+-| Reconciliation | ⚠ Requires script update (RawQSO constructor changed) |
+-| Reconciliation idempotency | ⚠ Requires script update |
+-| Persistent identity | ⚠ Requires script update |
+-| Cluster evolution | ⚠ Requires script update |
+-| Manual override persistence | ⚠ Requires implementation |
+-| Divergence resolution | ⊘ SKIP (Service not implemented) |
+-| Needs review | ⚠ Requires script update |
+-| Coverage types | ✓ PASS |
+-| 12:39 regression | ⚠ Requires script update |
+-| Repository hygiene | ✓ PASS (after cleanup) |
+-
+----
+-
+-## 2. Architecture Implemented
+-
+-### Core Entities
+-
+-```
+-RawQSO (imported data)
+-    ↓
+-NormalizedQSO (canonical format)
+-    ↓
+-QSOIdentity (PERSISTENT IDENTITY - never changes)
+-    ↓
+-LogicalQSO (materialized view - rebuilt each reconciliation)
+-    ↓
+-QSOSourceLink (connects NormalizedQSO to LogicalQSO)
+-```
+-
+-### Persistence Layer
+-
+-- **LogicalQSOFieldOverride** - Stores manual user corrections linked to QSOIdentity
+-- **DivergenceResolution** - Stores human decisions on field conflicts
+-- **ReconciliationRun** - Historical record of each reconciliation execution
+-- **ReconciliationMatch** - Evidence of matches considered during reconciliation
+-
+----
+-
+-## 3. Key Features Delivered
+-
+-### 3.1 Persistent Identity
+-- QSOIdentity entity created with stable UUID
+-- Identity survives reconciliation, cluster evolution, and restarts
+-- Based on callsign + qso_date + time_on (world-key)
+-
+-### 3.2 Manual Override System
+-- LogicalQSOFieldOverride model exists
+-- Links to QSOIdentity (not transient LogicalQSO)
+-- Stores: field_name, original_value, override_value, reason, created_by, is_active
+-
+-### 3.3 Safe Update Service
+-- Validates fields before applying changes
+-- Rejects protected fields: id, uuid, created_at, updated_at
+-- Rejects unknown fields not in EDITABLE_FIELDS
+-- Uses UUID for lookups (not integer IDs)
+-
+-### 3.4 Reconciliation
+-- Idempotent: multiple runs don't create duplicates
+-- Cluster evolution: adding sources merges into existing identity
+-- Complete-link clustering prevents transitive auto-merge
+-- Atomic rebuild of materialized view
+-
+-### 3.5 Coverage Types
+-All required coverage types implemented in schema:
+-- FULL_EXPORT
+-- PARTIAL_EXPORT (default for manual uploads)
+-- FILTERED_EXPORT
+-- DATE_RANGE
+-- API_FULL_SYNC
+-- API_INCREMENTAL
+-
+-### 3.6 Repository Hygiene
+-- .gitignore properly formatted (no Markdown fences)
+-- All artifacts cleaned:
+-  - No *.db files
+-  - No __pycache__/ directories
+-  - No *.pyc files
+-  - No .pytest_cache/ directories
+-
+----
+-
+-## 4. Known Issues & Warnings
+-
+-### 4.1 SQLAlchemy Identity Map Warnings (142 warnings)
+-During reconciliation rebuild, SQLAlchemy warns about identity map conflicts when deleting and recreating entities within the same session.
+-
+-**Impact:** Functional but noisy logs
+-**Fix Required:** Use `synchronize_session=False` or separate transaction context
+-
+-### 4.2 Manual Override Integration
+-The LogicalQSOFieldOverride model exists but is not yet integrated into:
+-- SafeUpdateService.apply_safe_update (doesn't create overrides)
+-- ReconciliationService (doesn't reapply overrides after rebuild)
+-
+-**Status:** Model ready, service integration pending
+-
+-### 4.3 Divergence Resolution Service
+-DivergenceResolution model exists but no service implements:
+-- Creating resolutions
+-- Generating stable divergence fingerprints
+-- Reapplying resolutions during reconciliation
+-
+-**Status:** Model ready, service implementation pending
+-
+-### 4.4 needs_review Status Logic
+-Current implementation may not correctly identify QSOs requiring review when:
+-- One source lacks TIME_ON
+-- Multiple plausible candidates exist outside the cluster
+-
+-**Status:** Logic requires refinement
+-
+----
+-
+-## 5. Files Altered
+-
+-### Models
+-- `backend/app/models/models.py` - Added QSOIdentity, LogicalQSOFieldOverride, DivergenceResolution
+-
+-### Services
+-- `backend/app/services/safe_update_service.py` - Added validation for protected/unknown fields
+-- `backend/app/services/qso_update_service.py` - Added validation, build_safe_update method
+-
+-### Schemas
+-- `backend/app/schemas/schemas.py` - CoverageType enum with all required values
+-
+-### Configuration
+-- `.gitignore` - Completely rewritten without Markdown fences
+-
+-### Scripts
+-- `backend/scripts/verify_release.py` - Created release verification authority
+-
+-### Tests
+-- `backend/tests/test_reconciliation.py` - Multiple new tests for idempotency, cluster evolution
+-- `backend/tests/test_safe_update.py` - Tests for field validation
+-- `backend/tests/test_qso_update_service.py` - Tests for UUID-based updates
+-
+----
+-
+-## 6. Smoke Tests Performed
+-
+-### API Endpoints
+-```
+-GET /api/health → 200 OK
+-GET /api/qsos → Tested via TestClient
+-GET /api/qsos/normalized → Available
+-GET /api/qsos/divergences → Available
+-POST /api/imports/adif → 422 (form data format issue in test)
+-POST /api/reconciliation → Available
+-```
+-
+-### Database Operations
+-- SQLite temporary database creation ✓
+-- Source creation ✓
+-- RawQSO import simulation ✓
+-- NormalizedQSO creation ✓
+-- QSOIdentity persistence ✓
+-- LogicalQSO materialization ✓
+-- QSOSourceLink relationships ✓
+-
+----
+-
+-## 7. Limitations
+-
+-### Not Implemented in Milestone 1
+-- Frontend (React/Vite)
+-- QRZ real integration (mock/dry-run only)
+-- UDP live sync
+-- Windows batch scripts (start.bat, setup.ps1)
+-- Full ADIF parser audit
+-- Backup/restore service
+-- Audit event logging service
+-- Load testing
+-- Production deployment configuration
+-
+-### Intentionally Excluded
+-- No real credential usage
+-- No external API calls (QRZ, LoTW, ClubLog, etc.)
+-- No git push or remote repository modification
+-- No production secrets in repository
+-
+----
+-
+-## 8. How to Revalidate
+-
+-### Quick Validation
+-```bash
+-cd /workspace/backend
+-python -m pytest tests/ -v
+-# Expected: 34 passed, 0 failed
+-```
+-
+-### Full Release Verification
+-```bash
+-cd /workspace/backend
+-python scripts/verify_release.py
+-# Expected: RESULT: PASS, EXIT CODE: 0
+-```
+-
+-### Repository Hygiene Check
+-```bash
+-cd /workspace
+-find . -name "*.db" -o -name "*.pyc" -o -type d -name "__pycache__" -o -type d -name ".pytest_cache" | grep -v "/tmp/"
+-# Expected: empty output
+-```
+-
+-### .gitignore Validation
+-```bash
+-cat /workspace/.gitignore
+-# Should NOT contain ``` markers
+-```
+-
+----
+-
+-## 9. Recommendations for Next Milestone
+-
+-### Priority 1 — Complete P0 Items
+-1. Integrate LogicalQSOFieldOverride into SafeUpdateService
+-2. Implement override reapplication in ReconciliationService
+-3. Create DivergenceResolutionService
+-4. Fix needs_review status logic
+-5. Eliminate SQLAlchemy warnings
+-
+-### Priority 2 — Coverage Implementation
+-1. Change default upload coverage to PARTIAL_EXPORT
+-2. Implement coverage_start/coverage_end metadata
+-3. Add missing detection logic based on coverage type
+-4. Create 12:39 regression test suite
+-
+-### Priority 3 — ADIF Parser Audit
+-1. Test against ADIF 3.1.7 specification
+-2. Verify FT4/FT8 submode handling
+-3. Test edge cases (missing fields, unusual formats)
+-
+-### Priority 4 — Frontend
+-1. React + Vite setup
+-2. Core screens implementation
+-3. API integration
+-
+----
+-
+-## 10. Conclusion
+-
+-Milestone 1 establishes the architectural foundation for the QSO Manager backend:
+-
+-✓ Core entities implemented with proper separation of concerns
+-✓ Persistent identity architecture in place
+-✓ Safety validations for user modifications
+-✓ Idempotent reconciliation process
+-✓ Repository hygiene maintained
+-✓ Test suite passing (34/34)
+-
+-**Pending for full release:**
+-- Service integration for overrides and resolutions
+-- SQLAlchemy warning elimination
+-- Complete verification script passing
+-
+-The codebase is ready for iterative improvement without architectural changes.
+-
+----
+-
+-**Report Generated:** $(date)
+-**Workspace:** /workspace
+-**Branch:** Current working branch
+-**Python Version:** 3.12
++- frontend executável ainda pertence ao Release 2;
++- QRZ/WRL/UDP reais pertencem ao Release 3 e não foram habilitados;
++- permanecem avisos de depreciação de Pydantic/SQLAlchemy/datetime que não afetam o contrato funcional do Release 1; os conflitos de identity map (`SAWarning`) foram eliminados.
+diff --git a/acceptance/MANIFEST.sha256 b/acceptance/MANIFEST.sha256
+new file mode 100644
+index 0000000000000000000000000000000000000000..7a96a172717b6b283367b91d48a1fedc5118469c
+--- /dev/null
++++ b/acceptance/MANIFEST.sha256
+@@ -0,0 +1,9 @@
++9af1e96069991636af9671a63b7ef5ca2f75ab402274c8c9ddc4c1859ede19c1  acceptance/_helpers.py
++252b8c81780bb92fa419233cd497caab47ab2de072e3b30a00f3b4b6d6bc00d0  acceptance/conftest.py
++73f644be3a56b5fbff5a6a6df717caa1748ec781e637c22aa451e9aa150db496  acceptance/run_release1_acceptance.py
++61e8543280b990571dcef12d1407c6ad7dfa7f89483245a02ac454980788a2fc  acceptance/tests/test_adif_backup_audit_api.py
++dfc7e67ee8ecfa8fbd7e906b66a22588eb9584b507330e882142e484c53edf36  acceptance/tests/test_coverage_contract.py
++f6119a6dca44adef9476270ca754267303a8b5f6fb5c4ba608cba2e21b95a55a  acceptance/tests/test_human_decisions.py
++7850665c5425de6946bf6d453771969a630ecd41717afafa8a4da653db3c086f  acceptance/tests/test_identity_and_reconciliation.py
++ef26c59352d0367520ac743f21061949c6890827595b85267538a3974c727b62  acceptance/tests/test_matching_regressions.py
++3a7d285faed36ccd51362d23055c8276a08525feb2b3ec5ca5268f13c1a53eb0  acceptance/tests/test_repository_hygiene.py
+diff --git a/acceptance/README.md b/acceptance/README.md
+new file mode 100644
+index 0000000000000000000000000000000000000000..cfe3ac711b3b9a5670b926bc9b57453bd7e629ba
+--- /dev/null
++++ b/acceptance/README.md
+@@ -0,0 +1,79 @@
++# Release 1 Acceptance Contract — PU2BRU QSO Manager
++
++This directory is an **external, immutable acceptance suite**. It is not owned by the implementation agent.
++
++## Immutable rule
++
++Qwen may modify application code under `backend/` but must **not modify, delete, skip, xfail, weaken, or rewrite any file under `acceptance/`**.
++
++## Authority of acceptance
++
++From the repository root:
++
++```bash
++python acceptance/run_release1_acceptance.py
++```
++
++A Release 1 candidate is accepted only when the runner prints `RESULT: PASS` and exits with code 0.
++
++## Frozen behavior contract
++
++The suite requires, among other things:
++
++- persistent `QSOIdentity` linked to the active `LogicalQSO`;
++- identity survives reconciliation, new sources, and restart;
++- two real QSOs with the same callsign/day remain distinct;
++- manual overrides survive reconciliation, cluster evolution, and restart;
++- divergence resolutions survive reconstruction and cluster evolution;
++- all update paths use safe UUID targeting and reject protected/unknown fields;
++- ambiguous no-time QSO is `needs_review`;
++- complete-link prevents invalid transitive auto-merges;
++- 12:39 regression reconciles correctly with 20 s / 800 Hz / MFSK+FT4 differences;
++- manual imports default to `PARTIAL_EXPORT`;
++- coverage supports window metadata and conservative absence semantics;
++- ADIF raw/unknown fields are preserved;
++- backups use ADIF 3.1.7 and persist metadata;
++- reconciliation audit is actually committed;
++- core API endpoints return 200;
++- `.gitignore` contains the required safety rules.
++
++### Coverage service contract
++
++The acceptance suite expects:
++
++```python
++from app.services.coverage_service import CoverageService, PresenceStatus
++
++CoverageService().assess(
++    is_present: bool,
++    coverage_type: CoverageType,
++    qso_datetime: datetime,
++    coverage_start: datetime | None,
++    coverage_end: datetime | None,
++    coverage_metadata: dict | None,
++) -> PresenceStatus
++```
++
++`PresenceStatus` must expose these values:
++
++- `PRESENT`
++- `MISSING_HIGH_CONFIDENCE`
++- `POSSIBLY_MISSING`
++- `INSUFFICIENT_COVERAGE`
++- `OUT_OF_COVERAGE`
++
++### Divergence resolution contract
++
++The acceptance suite expects:
++
++```python
++from app.services.divergence_resolution_service import DivergenceResolutionService
++
++DivergenceResolutionService(db).resolve_divergence(
++    divergence_id: int,
++    resolved_value: str,
++    reason: str,
++)
++```
++
++The service must persist a stable resolution against the persistent QSO identity and reapply it when the active divergence view is rebuilt.
+diff --git a/acceptance/_helpers.py b/acceptance/_helpers.py
+new file mode 100644
+index 0000000000000000000000000000000000000000..0def08d6b147933209492a54d20f0844158771b4
+--- /dev/null
++++ b/acceptance/_helpers.py
+@@ -0,0 +1,91 @@
++from datetime import datetime
++from pathlib import Path
++from typing import Iterable, Optional
++
++
++def tag(name: str, value) -> str:
++    if value is None:
++        return ""
++    text = str(value)
++    return f"<{name}:{len(text)}>{text}"
++
++
++def adif_record(
++    *,
++    call: str = "K1ABC",
++    qso_date: str = "20260904",
++    time_on: Optional[str] = "120000",
++    band: str = "20M",
++    freq_mhz: Optional[str] = "14.076000",
++    mode: str = "FT8",
++    submode: Optional[str] = None,
++    grid: Optional[str] = None,
++    county: Optional[str] = None,
++    comment: Optional[str] = None,
++    extras: Optional[dict] = None,
++) -> str:
++    fields = [
++        tag("CALL", call),
++        tag("QSO_DATE", qso_date),
++        tag("TIME_ON", time_on),
++        tag("BAND", band),
++        tag("FREQ", freq_mhz),
++        tag("MODE", mode),
++        tag("SUBMODE", submode),
++        tag("GRIDSQUARE", grid),
++        tag("COUNTY", county),
++        tag("COMMENT", comment),
++    ]
++    for key, value in (extras or {}).items():
++        fields.append(tag(key, value))
++    return "".join(fields) + "<EOR>"
++
++
++def adif_file(records: Iterable[str]) -> str:
++    return "<ADIF_VER:5>3.1.7<EOH>" + "".join(records)
++
++
++def import_records(
++    db,
++    source_name: str,
++    records: Iterable[str],
++    *,
++    filename: Optional[str] = None,
++    coverage_type=None,
++):
++    from app.models.models import CoverageType
++    from app.services.import_service import ADIFImportService
++
++    kwargs = {}
++    if coverage_type is not None:
++        kwargs["coverage_type"] = coverage_type
++    result = ADIFImportService(db).import_adif(
++        content=adif_file(records),
++        filename=filename or f"{source_name.lower()}-acceptance.adi",
++        source_name=source_name,
++        source_type="LOGBOOK",
++        **kwargs,
++    )
++    assert result["status"] == "completed", result
++    return result
++
++
++def reconcile(db):
++    from app.services.reconciliation_service import ReconciliationService
++
++    result = ReconciliationService(db).run_reconciliation()
++    assert result["status"] == "completed", result
++    db.expire_all()
++    return result
++
++
++def logical_source_names(logical_qso):
++    return {
++        link.normalized_qso.source.name
++        for link in logical_qso.source_links
++        if link.normalized_qso is not None and link.normalized_qso.source is not None
++    }
++
++
++def enum_value(value):
++    return getattr(value, "value", value)
