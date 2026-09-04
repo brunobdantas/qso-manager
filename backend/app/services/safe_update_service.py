@@ -151,7 +151,13 @@ class SafeUpdateService:
             
         Returns:
             Updated LogicalQSO or None if not found
+            
+        Raises:
+            ValueError: If changes contain protected or unknown fields
         """
+        # Validate changes FIRST - reject protected/unknown fields explicitly
+        self._validate_changes(changes)
+        
         # Query by UUID, not by integer id
         qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
         

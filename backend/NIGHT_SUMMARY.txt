@@ -1,0 +1,27 @@
+PU2BRU QSO Manager - Night Autonomous Run Summary
+==================================================
+
+ESTADO FINAL:
+- 34 testes coletados
+- 34 passed
+- 0 failed
+
+CORREÇÕES IMPLEMENTADAS:
+1. SafeUpdateService.apply_safe_update agora valida campos protegidos/desconhecidos
+2. .gitignore corrigido (sem ```, com todas entradas necessárias)
+3. Artefatos removidos (qso_manager.db, __pycache__, *.pyc, .pytest_cache)
+
+PENDÊNCIAS CRÍTICAS (NÃO RESOLVIDAS):
+1. Manual Override Persistente - LogicalQSOFieldOverride existe mas não integrado
+2. Divergence Resolution Persistente - Modelo existe sem service
+3. needs_review status pode não verificar corretamente
+
+PRÓXIMOS PASSOS OBRIGATÓRIOS:
+1. Integrar overrides manuais no SafeUpdateService
+2. Implementar reaplicação de overrides na reconciliação
+3. Criar DivergenceResolutionService
+4. Adicionar testes de persistência pós-reconciliação
+
+VALIDAÇÃO RÁPIDA:
+cd /workspace/backend && python -m pytest tests/ -v
+find . -name "*.db" -o -name "*.pyc" | grep -v "/tmp/"
