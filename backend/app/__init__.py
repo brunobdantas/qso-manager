@@ -1,1 +1,1 @@
-"""App module initialization."""
+"""app module."""

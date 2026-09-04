@@ -1,40 +1,27 @@
+"""Core configuration and settings."""
 from pydantic_settings import BaseSettings
-from typing import Optional
-import os
+from functools import lru_cache
 
 
 class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+    """Application settings."""
     
     # Database
     database_url: str = "sqlite:///./data/qso_manager.db"
     
-    # QRZ.com API
-    qrz_api_key: Optional[str] = None
-    qrz_username: Optional[str] = None
+    # API
+    api_title: str = "PU2BRU QSO Manager API"
+    api_version: str = "1.0.0"
     
-    # Server
-    backend_host: str = "127.0.0.1"
-    backend_port: int = 8000
-    frontend_port: int = 5173
-    
-    # Environment
-    environment: str = "development"
-    
-    # CORS
-    cors_origins: list = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    # Frequency tolerance in Hz
+    freq_tolerance_hz: int = 1000
     
     class Config:
         env_file = ".env"
         case_sensitive = False
-    
-    @property
-    def is_production(self) -> bool:
-        return self.environment.lower() == "production"
-    
-    @property
-    def qrz_enabled(self) -> bool:
-        return bool(self.qrz_api_key and self.qrz_username)
 
 
-settings = Settings()
+@lru_cache()
+def get_settings() -> Settings:
+    """Get cached settings instance."""
+    return Settings()
