@@ -976,12 +976,17 @@ def test_divergences_endpoint_returns_200():
     """Teste do endpoint /api/qsos/divergences retornar HTTP 200."""
     from fastapi.testclient import TestClient
     from sqlalchemy import create_engine
+    from sqlalchemy.pool import StaticPool
     from sqlalchemy.orm import sessionmaker
     from app.db.database import Base, get_db
     from app.main import app
     from app.models.models import Divergence, LogicalQSO, Source
     
-    engine = create_engine("sqlite:///:memory:")
+    engine = create_engine(
+        "sqlite://",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
     Base.metadata.create_all(engine)
     SessionLocal = sessionmaker(bind=engine)
     

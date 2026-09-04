@@ -1,1 +1,26 @@
-Nothing should be ignored in this case, as the changes only include Python source files (.py) which are core project files and not build artifacts, dependencies, or temporary files.
+```
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+.venv/
+pip-log.txt
+pip-delete-this-directory.txt
+.tox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+*.log
+.git/modules/
+*.sconsign.dblite
+.sconsign.dblite
+*.mono
+.mono
+```
