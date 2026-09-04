@@ -491,3 +491,48 @@ class Settings(Base):
     # Timestamps
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+# ============================================================================
+# PERSISTENT OVERRIDE MODELS (survive reconciliation)
+# ============================================================================
+
+class LogicalQSOFieldOverride(Base):
+    """Persistent manual overrides for LogicalQSO fields that survive reconciliation."""
+    __tablename__ = "logical_qso_field_overrides"
+
+    id = Column(Integer, primary_key=True, index=True)
+    logical_qso_uuid = Column(String(36), ForeignKey("logical_qsos.uuid"), nullable=False, index=True)
+    field_name = Column(String(50), nullable=False)
+    original_value = Column(Text)
+    override_value = Column(Text, nullable=False)
+    reason = Column(Text)
+    created_by = Column(String(100))  # 'manual', 'api', etc.
+    is_active = Column(Boolean, default=True, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_override_uuid_field', 'logical_qso_uuid', 'field_name'),
+    )
+
+
+class DivergenceResolution(Base):
+    """Persistent resolution for divergences that survives reconciliation."""
+    __tablename__ = "divergence_resolutions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    divergence_key = Column(String(255), nullable=False, index=True)  # SHA256 fingerprint
+    logical_qso_uuid = Column(String(36), ForeignKey("logical_qsos.uuid"), nullable=False, index=True)
+    field_name = Column(String(50), nullable=False)
+    source_1_name = Column(String(100))
+    source_2_name = Column(String(100))
+    resolved_value = Column(Text, nullable=False)
+    reason = Column(Text)
+    status = Column(String(20), default="resolved")  # resolved, ignored
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    __table_args__ = (
+        Index('idx_resolution_key', 'divergence_key'),
+    )
