@@ -7,7 +7,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 
 from ..adapters.cloud_logs import CloudProviderError
-from ..services.cloud_hub_service import CloudHubService
+from ..services.cloud_hub_fast_service import CloudHubService
 
 router = APIRouter(prefix="/api/cloud", tags=["cloud-logbooks"])
 
