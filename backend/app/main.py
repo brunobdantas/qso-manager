@@ -15,7 +15,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="PU2BRU QSO Manager API",
     description="Connected QSO management, reconciliation and safe logbook synchronization",
-    version="5.0.0",
+    version="5.0.1",
 )
 
 app.add_middleware(
@@ -50,7 +50,7 @@ def root():
         return FileResponse(index)
     return {
         "name": "PU2BRU QSO Manager API",
-        "version": "5.0.0",
+        "version": "5.0.1",
         "docs": "/docs",
         "health": "/api/health",
         "frontend": "not-built",

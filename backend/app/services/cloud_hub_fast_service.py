@@ -3,11 +3,16 @@ from __future__ import annotations
 
 from typing import Dict, Any, Optional
 
-from ..adapters.cloud_logs import CloudProviderError
+from ..adapters.cloud_logs import CloudProviderError, PROVIDERS
+from ..adapters.qrz_cloud_v501 import QRZCloudAdapterV501
 from .cloud_hub_service import CloudHubService as BaseCloudHubService
 from .cloud_snapshot_store import CloudSnapshotStore
 from .credential_store import CredentialStore
 from .fast_adif_comparison_service import FastADIFComparisonService
+
+# Release 5.0.1 hotfix: keep the shared provider registry used by the base
+# service, but replace only QRZ with the production diagnostic adapter.
+PROVIDERS["QRZ"] = QRZCloudAdapterV501
 
 
 class CloudHubService(BaseCloudHubService):
