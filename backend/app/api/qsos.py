@@ -6,7 +6,7 @@ from typing import List, Optional
 
 from ..db.database import get_db
 from ..models.models import LogicalQSO, NormalizedQSO, Source, Divergence
-from ..schemas.schemas import LogicalQSOResponse, LogicalQSODetail, NormalizedQSOFull
+from ..schemas.schemas import LogicalQSOResponse, LogicalQSODetail, NormalizedQSOFull, DivergenceResponse
 
 
 router = APIRouter(prefix="/api/qsos", tags=["qsos"])
@@ -48,7 +48,7 @@ def get_qsos(
     return qsos
 
 
-@router.get("/divergences", response_model=List[dict])
+@router.get("/divergences", response_model=List[DivergenceResponse])
 def get_divergences(
     status: Optional[str] = None,
     db: Session = Depends(get_db),
@@ -59,7 +59,8 @@ def get_divergences(
     if status:
         query = query.filter(Divergence.status == status)
     
-    return query.all()
+    divergences = query.all()
+    return divergences
 
 
 @router.get("/normalized", response_model=List[NormalizedQSOFull])

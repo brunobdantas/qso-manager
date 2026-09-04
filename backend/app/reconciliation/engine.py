@@ -558,16 +558,29 @@ class ReconciliationEngine:
         qsos: List[NormalizedQSOData],
         match: Optional[MatchCandidate] = None
     ):
-        """Create a logical QSO from one or more normalized QSOs."""
+        """Create a logical QSO from one or more normalized QSOs.
+        
+        IDEMPOTENCY: Uses deterministic UUID based on sorted normalized QSO IDs
+        to ensure the same cluster always produces the same LogicalQSO.
+        """
+        import hashlib
+        
         if not qsos:
             return
         
         # Use first QSO as base, then merge fields from others
         base = qsos[0]
         
+        # Compute deterministic UUID from sorted normalized QSO IDs
+        sorted_qso_ids = sorted([q.id for q in qsos])
+        fingerprint_input = "|".join(str(id_) for id_ in sorted_qso_ids)
+        cluster_fingerprint = hashlib.sha256(fingerprint_input.encode()).hexdigest()
+        # Use first 36 chars of hex digest as UUID-like string
+        deterministic_uuid = f"{cluster_fingerprint[:8]}-{cluster_fingerprint[8:12]}-{cluster_fingerprint[12:16]}-{cluster_fingerprint[16:20]}-{cluster_fingerprint[20:32]}"
+        
         # Build canonical values field-by-field
         canonical = {
-            'uuid': str(uuid.uuid4()),
+            'uuid': deterministic_uuid,
             'callsign': base.callsign,
             'qso_date': base.qso_date,
             'time_on': base.time_on,
@@ -615,7 +628,9 @@ class ReconciliationEngine:
         
         canonical['confirmations'] = confirmations if confirmations else None
         canonical['field_provenance'] = provenance
-        canonical['status'] = 'reconciled' if len(qsos) == 1 else 'needs_review'
+        
+        # Determine status based on match quality
+        canonical['status'] = self._determine_cluster_status(qsos)
         canonical['divergence_count'] = 0
         canonical['source_links'] = [
             {'normalized_qso_id': q.id, 'source_name': q.source_name}
@@ -627,6 +642,39 @@ class ReconciliationEngine:
             self._detect_divergences(canonical['uuid'], qsos)
         
         self.logical_qsos[canonical['uuid']] = canonical
+    
+    def _determine_cluster_status(self, qsos: List[NormalizedQSOData]) -> str:
+        """Determine the status of a LogicalQSO cluster.
+        
+        Rules:
+        - Cluster with only AUTO_MATCHED A/B matches: "reconciled"
+        - Singleton with no conflicting candidates: "reconciled"
+        - QSO with REVISAO_MANUAL, POSSIBLE_MATCH, Level E, or time ambiguity: "needs_review"
+        """
+        if len(qsos) == 1:
+            # Singleton - check if there are potential conflicts
+            # For now, singletons are reconciled unless they have missing time
+            # and there could be multiple candidates (handled during clustering)
+            return 'reconciled'
+        
+        # Multi-source cluster - check match levels
+        # If any pair would have been level E or requires manual review, mark as needs_review
+        for i, qso1 in enumerate(qsos):
+            for j, qso2 in enumerate(qsos[i+1:], i+1):
+                if qso1.source_id == qso2.source_id:
+                    continue
+                
+                # Evaluate match between these two
+                candidate = self._evaluate_match(qso1, qso2)
+                if candidate:
+                    # Level E or manual review required
+                    if candidate.match_level == MatchLevel.E:
+                        return 'needs_review'
+                    if candidate.match_status in (MatchStatus.REVISAO_MANUAL, MatchStatus.MANUAL_REVIEW, MatchStatus.POSSIBLE_MATCH):
+                        return 'needs_review'
+        
+        # All pairs are auto-matched (A or B)
+        return 'reconciled'
     
     def _detect_divergences(self, logical_uuid: str, qsos: List[NormalizedQSOData]):
         """Detect field divergences between sources."""
