@@ -1,19 +1,20 @@
-"""Database configuration and session management."""
 from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, declarative_base
-from typing import Generator
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker
 import os
+import sys
 
-from app.core.config import get_settings
+# Add backend to path for proper imports
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-settings = get_settings()
+from app.core.config import settings
 
 # Ensure data directory exists
-os.makedirs(os.path.dirname(settings.database_url.replace("sqlite:///", "")), exist_ok=True)
+os.makedirs(os.path.dirname("data/"), exist_ok=True)
 
 engine = create_engine(
     settings.database_url,
-    connect_args={"check_same_thread": False}  # SQLite specific
+    connect_args={"check_same_thread": False}  # Needed for SQLite
 )
 
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
@@ -21,8 +22,8 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 Base = declarative_base()
 
 
-def get_db() -> Generator:
-    """Get database session."""
+def get_db():
+    """Dependency for getting database sessions."""
     db = SessionLocal()
     try:
         yield db
