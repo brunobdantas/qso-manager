@@ -1,0 +1,329 @@
+"""Tests for the reconciliation engine.
+
+These tests verify the corrected reconciliation algorithm:
+- Time-based blocking rules
+- Match level E never auto-merges
+- Multiple QSOs same call/date handled correctly
+- Mode family matching (FT4, SSB, etc.)
+"""
+
+import pytest
+from datetime import datetime
+
+from app.reconciliation.engine import (
+    ReconciliationEngine,
+    NormalizedQSOData,
+    MatchLevel,
+    MatchStatus,
+)
+
+
+def make_qso(
+    id_: int,
+    callsign: str = "PU2BRU",
+    date: str = "2024-01-15",
+    time: str = "12:00:00",
+    band: str = "20M",
+    freq: float = 14076.0,
+    mode: str = "FT4",
+    mode_family: str = "DIGITAL",
+    source_id: int = 1,
+    source_name: str = "QRZ",
+    grid: str = "GG55",
+):
+    """Helper to create NormalizedQSOData."""
+    return NormalizedQSOData(
+        id=id_,
+        callsign=callsign,
+        qso_date=date,
+        time_on=time,
+        band=band,
+        freq=freq,
+        mode=mode,
+        submode=None,
+        operating_mode=mode,
+        mode_family=mode_family,
+        rst_sent="599",
+        rst_rcvd="599",
+        grid=grid,
+        source_id=source_id,
+        source_name=source_name,
+    )
+
+
+class TestTimeBasedMatching:
+    """TESTE A, B, C: Time-based matching rules."""
+    
+    def test_same_call_date_time_diff_23_seconds_match(self):
+        """TESTE A: Same CALL/date/band, 23 second difference -> MATCH."""
+        engine = ReconciliationEngine()
+        
+        qso1 = make_qso(id_=1, time="12:00:00", source_id=1, source_name="QRZ")
+        qso2 = make_qso(id_=2, time="12:00:23", source_id=2, source_name="WRL")
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Should have 1 match
+        assert len(result.matches) == 1
+        match = result.matches[0]
+        
+        # Should be auto-matched (level A or B)
+        assert match.match_level in (MatchLevel.A, MatchLevel.B)
+        assert match.match_status == MatchStatus.AUTO_MATCHED
+        
+        # Should have 1 logical QSO (merged)
+        assert len(result.logical_qsos) == 1
+    
+    def test_same_call_date_time_diff_8_hours_no_match(self):
+        """TESTE B: Same CALL/date/band, 8 hour difference -> NO MATCH."""
+        engine = ReconciliationEngine()
+        
+        qso1 = make_qso(id_=1, time="08:00:00", source_id=1, source_name="QRZ")
+        qso2 = make_qso(id_=2, time="16:00:00", source_id=2, source_name="WRL")
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Time diff is 8 hours = 28800 seconds > 300 seconds threshold
+        # Should NOT auto-match
+        assert len(result.matches) >= 1  # May still create a candidate
+        match = result.matches[0]
+        
+        # Should be level E (candidate only) with blocking reason
+        assert match.match_level == MatchLevel.E
+        assert match.match_status == MatchStatus.REVISAO_MANUAL
+        assert len(match.blocking_reasons) > 0
+        
+        # Should have 2 separate logical QSOs
+        assert len(result.logical_qsos) == 2
+    
+    def test_same_call_two_qsos_same_day_different_times(self):
+        """TESTE C: Same CALL has 2 different QSOs same day -> 2 LogicalQSOs."""
+        engine = ReconciliationEngine()
+        
+        # Two QSOs from QRZ at different times
+        qso1_qrz = make_qso(id_=1, time="10:00:00", source_id=1, source_name="QRZ")
+        qso2_qrz = make_qso(id_=2, time="14:00:00", source_id=1, source_name="QRZ")
+        
+        # One QSO from WRL matching first one
+        qso1_wrl = make_qso(id_=3, time="10:00:15", source_id=2, source_name="WRL")
+        
+        result = engine.reconcile([qso1_qrz, qso2_qrz, qso1_wrl])
+        
+        # Should have at least 2 logical QSOs (the 14:00 one can't match anything)
+        assert len(result.logical_qsos) >= 2
+        
+        # The 14:00 QSO should be separate
+        logical_callsigns = [lq['callsign'] for lq in result.logical_qsos]
+        assert len(logical_callsigns) >= 2
+
+
+class TestCrossSourceMatching:
+    """TESTE D, E: Cross-source matching."""
+    
+    def test_qrz_wrl_same_time_not_missing(self):
+        """TESTE D: QRZ has QSO 12:39 and WRL has 12:39 -> not missing."""
+        engine = ReconciliationEngine()
+        
+        qso_qrz = make_qso(id_=1, time="12:39:00", source_id=1, source_name="QRZ")
+        qso_wrl = make_qso(id_=2, time="12:39:00", source_id=2, source_name="WRL")
+        
+        result = engine.reconcile([qso_qrz, qso_wrl])
+        
+        # Should match and merge
+        assert len(result.logical_qsos) == 1
+        assert len(result.matches) == 1
+        assert result.matches[0].match_status == MatchStatus.AUTO_MATCHED
+    
+    def test_qrz_1239_wrl_only_1800_not_same_qso(self):
+        """TESTE E: QRZ has 12:39, WRL only has 18:00 -> not same QSO."""
+        engine = ReconciliationEngine()
+        
+        qso_qrz = make_qso(id_=1, time="12:39:00", source_id=1, source_name="QRZ")
+        qso_wrl = make_qso(id_=2, time="18:00:00", source_id=2, source_name="WRL")
+        
+        result = engine.reconcile([qso_qrz, qso_wrl])
+        
+        # Should NOT be considered same QSO
+        # Time difference is > 5 hours
+        assert len(result.logical_qsos) == 2
+
+
+class TestModeMatching:
+    """TESTE F, G: Mode family matching."""
+    
+    def test_mfsk_submode_ft4_equivalent(self):
+        """TESTE F: MFSK+SUBMODE=FT4 should equal FT4."""
+        engine = ReconciliationEngine()
+        
+        qso1 = make_qso(
+            id_=1, 
+            mode="MFSK", 
+            source_id=1, 
+            source_name="QRZ",
+            time="12:00:00"
+        )
+        qso1.submode = "FT4"
+        qso1.operating_mode = "FT4"
+        
+        qso2 = make_qso(
+            id_=2, 
+            mode="FT4", 
+            source_id=2, 
+            source_name="WRL",
+            time="12:00:10"
+        )
+        qso2.submode = None
+        qso2.operating_mode = "FT4"
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Should match well due to same operating mode
+        assert len(result.matches) == 1
+        assert result.matches[0].match_status == MatchStatus.AUTO_MATCHED
+    
+    def test_usb_ssb_same_family(self):
+        """TESTE G: USB and SSB are same family."""
+        engine = ReconciliationEngine()
+        
+        qso1 = make_qso(
+            id_=1,
+            mode="USB",
+            mode_family="SSB",
+            operating_mode="USB",
+            source_id=1,
+            source_name="QRZ",
+            time="12:00:00",
+            band="40M",
+            freq=7200.0,
+        )
+        
+        qso2 = make_qso(
+            id_=2,
+            mode="SSB",
+            mode_family="SSB",
+            operating_mode="SSB",
+            source_id=2,
+            source_name="WRL",
+            time="12:00:10",
+            band="40M",
+            freq=7200.0,
+        )
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Should match - same mode family
+        assert len(result.matches) == 1
+
+
+class TestFrequencyTolerance:
+    """TESTE H: Frequency tolerance."""
+    
+    def test_freq_210761_vs_210769_tolerance(self):
+        """TESTE H: Frequency 21076.1 vs 21076.9 kHz -> within tolerance."""
+        engine = ReconciliationEngine()
+        
+        qso1 = make_qso(
+            id_=1,
+            freq=21076.1,
+            source_id=1,
+            source_name="QRZ",
+            time="12:00:00",
+        )
+        
+        qso2 = make_qso(
+            id_=2,
+            freq=21076.9,
+            source_id=2,
+            source_name="WRL",
+            time="12:00:10",
+        )
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Difference is 0.8 kHz, within 3.0 kHz digital tolerance
+        assert len(result.matches) == 1
+        assert result.matches[0].freq_diff == 0.8  # kHz
+
+
+class TestLevelENoAutoMerge:
+    """TESTE J: Level E never auto-merges."""
+    
+    def test_level_e_never_auto_merge(self):
+        """TESTE J: Level E matches are candidate only, never auto-merge."""
+        engine = ReconciliationEngine()
+        
+        # Create QSOs that will get level E (poor match)
+        qso1 = make_qso(
+            id_=1,
+            band="20M",
+            source_id=1,
+            source_name="QRZ",
+            time="12:00:00",
+        )
+        
+        qso2 = make_qso(
+            id_=2,
+            band="40M",  # Different band - blocking
+            source_id=2,
+            source_name="WRL",
+            time="12:00:10",
+        )
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # If there's a match, it must be level E
+        for match in result.matches:
+            if match.match_level == MatchLevel.E:
+                assert match.match_status != MatchStatus.AUTO_MATCHED
+                assert match.match_status in (MatchStatus.REVISAO_MANUAL, MatchStatus.REJECTED)
+
+
+class TestDuplicateDetection:
+    """TESTE K, L: Duplicate detection."""
+    
+    def test_same_file_imported_twice_no_duplicate(self):
+        """TESTE K: Same file imported twice -> no duplicate records.
+        
+        This is tested at service level, but we verify fingerprint logic here.
+        """
+        from app.adif.parser import ADIFParser
+        
+        parser = ADIFParser()
+        
+        record1 = {
+            'CALL': 'PU2BRU',
+            'QSO_DATE': '2024-01-15',
+            'TIME_ON': '12:00:00',
+            'BAND': '20M',
+            'MODE': 'FT4',
+            'FREQ': 14076.0,
+        }
+        
+        record2 = {
+            'CALL': 'PU2BRU',
+            'QSO_DATE': '2024-01-15',
+            'TIME_ON': '12:00:00',
+            'BAND': '20M',
+            'MODE': 'FT4',
+            'FREQ': 14076.0,
+        }
+        
+        fp1 = parser.compute_fingerprint(record1)
+        fp2 = parser.compute_fingerprint(record2)
+        
+        # Same data = same fingerprint
+        assert fp1 == fp2
+    
+    def test_real_duplicates_within_source(self):
+        """TESTE L: Two duplicate lines within same source -> DUPLICIDADE_REAL."""
+        engine = ReconciliationEngine()
+        
+        # Two identical QSOs from same source
+        qso1 = make_qso(id_=1, time="12:00:00", source_id=1, source_name="QRZ")
+        qso2 = make_qso(id_=2, time="12:00:00", source_id=1, source_name="QRZ")
+        
+        result = engine.reconcile([qso1, qso2])
+        
+        # Should detect as real duplicate
+        assert len(result.duplicates) >= 1
+        assert result.duplicates[0]['type'].value == "REAL_DUPLICATE"
