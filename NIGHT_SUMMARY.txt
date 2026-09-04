@@ -1,0 +1,39 @@
+PU2BRU QSO Manager - Night Autonomous Run Summary
+==================================================
+
+STATUS: 34 TESTES PASSANDO, 0 FALHANDO
+
+CORREÇÕES IMPLEMENTADAS:
+1. SafeUpdateService agora rejeita campos protegidos (uuid, id, created_at, updated_at)
+2. SafeUpdateService agora rejeita campos desconhecidos/inválidos  
+3. QSOUpdateService agora possui validação de campos protegidos
+4. QSOUpdateService.build_safe_update() adicionado com validação
+5. .gitignore corrigido (sem delimitadores Markdown)
+6. Arquivos proibidos removidos (qso_manager.db, __pycache__, .pytest_cache, *.pyc)
+
+TESTES VERIFICADOS:
+- test_safe_update_rejects_protected_fields: PASSED
+- test_safe_update_rejects_unknown_fields: PASSED
+- test_qso_update_rejects_protected_fields: PASSED
+- test_safe_update_by_uuid_preserves_other_fields: PASSED
+- Todos os 34 testes existentes: PASSED
+
+PRÓXIMOS PASSOS NECESSÁRIOS:
+1. Implementar persistência de LogicalQSOFieldOverride
+2. Implementar persistência de DivergenceResolution
+3. Garantir que overrides sobrevivam à reconciliação
+4. Adicionar testes adversariais adicionais
+5. Executar smoke tests completos da API
+
+ARQUIVOS ALTERADOS:
+- backend/app/services/safe_update_service.py
+- backend/app/services/qso_update_service.py
+- .gitignore
+
+ARQUIVOS REMOVIDOS:
+- backend/data/qso_manager.db
+- __pycache__/ (todos)
+- .pytest_cache/ (todos)
+- *.pyc (todos)
+
+WARNINGs: 142 (deprecations SQLAlchemy/Pydantic - não críticos)
