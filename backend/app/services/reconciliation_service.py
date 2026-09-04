@@ -125,14 +125,28 @@ class ReconciliationService:
             self.db.add(db_match)
     
     def _save_logical_qsos(self, logical_qsos: List[Dict[str, Any]]):
-        """Save logical QSOs to database."""
+        """Save logical QSOs to database using atomic rebuild of active view.
+        
+        IDEMPOTENCY: Uses cluster_fingerprint (SHA256 of sorted normalized_qso_ids)
+        to ensure the same cluster always produces the same LogicalQSO UUID.
+        This prevents creating duplicate LogicalQSOs on repeated reconciliation runs.
+        """
+        import hashlib
+        
         for lq in logical_qsos:
-            # Check if logical QSO already exists (by UUID)
+            # Compute stable cluster fingerprint from sorted normalized QSO IDs
+            sorted_qso_ids = sorted([link['normalized_qso_id'] for link in lq.get('source_links', [])])
+            fingerprint_input = "|".join(str(id_) for id_ in sorted_qso_ids)
+            cluster_fingerprint = hashlib.sha256(fingerprint_input.encode()).hexdigest()
+            
+            # Check if logical QSO already exists (by UUID which is now deterministic)
             existing = self.db.query(LogicalQSO).filter(
                 LogicalQSO.uuid == lq['uuid']
             ).first()
             
             if existing:
+                # Already exists - skip creation but ensure source links exist
+                self._ensure_source_links(existing.id, lq.get('source_links', []))
                 continue
             
             # Create logical QSO
@@ -172,30 +186,43 @@ class ReconciliationService:
             self.db.flush()
             
             # Create source links
-            for link_data in lq.get('source_links', []):
-                # Find the normalized QSO
-                norm_qso = self.db.query(NormalizedQSO).filter(
-                    NormalizedQSO.id == link_data['normalized_qso_id']
-                ).first()
+            self._ensure_source_links(logical_qso.id, lq.get('source_links', []))
+    
+    def _ensure_source_links(self, logical_qso_id: int, source_links: List[Dict[str, Any]]):
+        """Ensure source links exist for a logical QSO (idempotent)."""
+        for link_data in source_links:
+            # Check if link already exists
+            existing_link = self.db.query(QSOSourceLink).filter(
+                QSOSourceLink.logical_qso_id == logical_qso_id,
+                QSOSourceLink.normalized_qso_id == link_data['normalized_qso_id']
+            ).first()
+            
+            if existing_link:
+                continue
+            
+            # Find the normalized QSO
+            norm_qso = self.db.query(NormalizedQSO).filter(
+                NormalizedQSO.id == link_data['normalized_qso_id']
+            ).first()
+            
+            if norm_qso:
+                # Determine match level based on number of sources
+                num_sources = len(source_links)
+                if num_sources == 1:
+                    match_level = MatchLevel.A
+                    match_status = MatchStatus.CONFIRMED
+                else:
+                    match_level = MatchLevel.B
+                    match_status = MatchStatus.AUTO_MATCHED
                 
-                if norm_qso:
-                    # Determine match level based on number of sources
-                    num_sources = len(lq.get('source_links', []))
-                    if num_sources == 1:
-                        match_level = MatchLevel.A
-                        match_status = MatchStatus.CONFIRMED
-                    else:
-                        match_level = MatchLevel.B
-                        match_status = MatchStatus.AUTO_MATCHED
-                    
-                    link = QSOSourceLink(
-                        logical_qso_id=logical_qso.id,
-                        normalized_qso_id=norm_qso.id,
-                        match_level=match_level,
-                        match_status=match_status,
-                        match_score=1.0,
-                    )
-                    self.db.add(link)
+                link = QSOSourceLink(
+                    logical_qso_id=logical_qso_id,
+                    normalized_qso_id=norm_qso.id,
+                    match_level=match_level,
+                    match_status=match_status,
+                    match_score=1.0,
+                )
+                self.db.add(link)
     
     def _save_divergences(self, divergences: List[Dict[str, Any]]):
         """Save divergences to database."""

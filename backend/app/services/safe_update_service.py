@@ -14,19 +14,31 @@ class SafeUpdateService:
     ensuring all non-targeted fields remain identical.
     """
     
+    # Allowlist of fields that can be edited
+    EDITABLE_FIELDS = {
+        'callsign', 'qso_date', 'time_on', 'time_off', 'band', 
+        'freq_hz', 'mode', 'submode', 'operating_mode', 'mode_family',
+        'rst_sent', 'rst_rcvd', 'grid', 'dxcc', 'country', 'state', 
+        'county', 'cqz', 'ituz', 'continent', 'iota', 'comment',
+        'confirmations', 'field_provenance', 'status', 'divergence_count'
+    }
+    
+    # Fields that can NEVER be changed via update
+    PROTECTED_FIELDS = {'id', 'uuid', 'created_at', 'updated_at'}
+    
     def __init__(self, db: Session):
         self.db = db
     
     def build_safe_update(
         self, 
-        qso_id: str, 
+        qso_uuid: str, 
         changes: Dict[str, Any], 
         reason: str
     ) -> Optional[Dict[str, Any]]:
         """Build a safe update preview for a specific LogicalQSO by its UUID.
         
         Args:
-            qso_id: The UUID/id of the LogicalQSO to update
+            qso_uuid: The UUID of the LogicalQSO to update (string)
             changes: Dictionary of field changes to apply
             reason: Reason for the update
             
@@ -41,7 +53,8 @@ class SafeUpdateService:
             
             Returns None if QSO not found.
         """
-        qso = self.db.query(LogicalQSO).filter(LogicalQSO.id == qso_id).first()
+        # Query by UUID, not by integer id
+        qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
         
         if qso is None:
             return None
@@ -58,11 +71,17 @@ class SafeUpdateService:
                 value = value.isoformat()
             before[field] = value
         
-        # Build 'after' state by cloning before and applying changes
+        # Filter changes: only allow editable fields, never protected fields
+        safe_changes = {
+            k: v for k, v in changes.items()
+            if k in self.EDITABLE_FIELDS and k not in self.PROTECTED_FIELDS
+        }
+        
+        # Build 'after' state by cloning before and applying safe changes
         after = before.copy()
         changed_fields = []
         
-        for field, new_value in changes.items():
+        for field, new_value in safe_changes.items():
             if field in all_fields:
                 old_value = before.get(field)
                 if old_value != new_value:
@@ -73,8 +92,8 @@ class SafeUpdateService:
         preserved_fields = [f for f in all_fields if f not in changed_fields]
         
         return {
-            "qso_uuid": getattr(qso, 'uuid', qso_id),
-            "qso_id": qso_id,
+            "qso_uuid": getattr(qso, 'uuid', qso_uuid),
+            "qso_id": qso.id,
             "before": before,
             "after": after,
             "changed_fields": changed_fields,
@@ -84,27 +103,34 @@ class SafeUpdateService:
     
     def apply_safe_update(
         self,
-        qso_id: str,
+        qso_uuid: str,
         changes: Dict[str, Any],
         reason: str
     ) -> Optional[LogicalQSO]:
-        """Apply a safe update to a LogicalQSO.
+        """Apply a safe update to a LogicalQSO by UUID.
         
         Args:
-            qso_id: The UUID/id of the LogicalQSO to update
+            qso_uuid: The UUID of the LogicalQSO to update (string)
             changes: Dictionary of field changes to apply
             reason: Reason for the update
             
         Returns:
             Updated LogicalQSO or None if not found
         """
-        qso = self.db.query(LogicalQSO).filter(LogicalQSO.id == qso_id).first()
+        # Query by UUID, not by integer id
+        qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
         
         if qso is None:
             return None
         
+        # Filter changes: only allow editable fields, never protected fields
+        safe_changes = {
+            k: v for k, v in changes.items()
+            if k in self.EDITABLE_FIELDS and k not in self.PROTECTED_FIELDS
+        }
+        
         # Apply only the specified changes
-        for field, value in changes.items():
+        for field, value in safe_changes.items():
             if hasattr(qso, field):
                 setattr(qso, field, value)
         
