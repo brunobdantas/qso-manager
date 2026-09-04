@@ -8,3 +8,7 @@ if not exist ".venv\Scripts\python.exe" (
 ".venv\Scripts\python.exe" acceptance\run_release1_acceptance.py
 if errorlevel 1 exit /b 1
 ".venv\Scripts\python.exe" scripts\verify_release2.py
+if errorlevel 1 exit /b 1
+".venv\Scripts\python.exe" -m pytest backend\tests\test_integrations.py -v
+if errorlevel 1 exit /b 1
+".venv\Scripts\python.exe" scripts\verify_release3.py
