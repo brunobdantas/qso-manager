@@ -481,15 +481,15 @@ class TestUpdateCorrectQSO:
             db.add(lq2)
             db.commit()
             
-            # Now update ONLY the first one (12:00) using its exact ID
+            # Now update ONLY the first one (12:00) using its UUID string
             update_data = {
                 "grid": "GG55AA",
                 "comment": "Updated QSO at 12:00",
             }
             
             service = QSOUpdateService(db)
-            # Use the internal id (not uuid) for update
-            updated_qso = service.update_qso(lq1.id, update_data)
+            # Use the UUID string for update - NOT the integer id
+            updated_qso = service.update_by_uuid("test-uuid-1", update_data, reason="test")
             
             # Verify only the first QSO was updated
             db.refresh(lq1)
@@ -509,7 +509,7 @@ class TestUpdateCorrectQSO:
 class TestSafeCountyUpdate:
     """TESTE N: REPLACE CNTY preserves all other fields."""
     
-    def test_county_update_preserves_other_fields(self):
+    def test_safe_update_by_uuid_preserves_other_fields(self):
         """TESTE N: REPLACE de CNTY deve preservar todos os demais campos.
         
         Build a safe update where:
@@ -565,21 +565,22 @@ class TestSafeCountyUpdate:
             db.commit()
             db.refresh(original_qso)
             
-            # Build safe update for CNTY only
+            # Build safe update for CNTY only - use UUID string, NOT integer id
             service = SafeUpdateService(db)
             
             update_spec = {
                 "county": "Campinas",
             }
             
-            # Use the safe update service which preserves other fields
+            # Use the UUID string for update - NOT the integer id
             result = service.build_safe_update(
-                original_qso.id,
+                "test-uuid-cnty",
                 update_spec,
                 reason="Adding county information",
             )
             
             # Verify the update preserves all other fields
+            assert result is not None, "build_safe_update should return a result"
             assert result['preserved_fields'] is not None
             
             # Check that critical fields are preserved
@@ -598,6 +599,9 @@ class TestSafeCountyUpdate:
             assert result['after']['county'] == "Campinas"
             
             # All other fields should remain the same
+            assert result['before']['callsign'] == result['after']['callsign']
+            assert result['before']['grid'] == result['after']['grid']
+            assert result['before']['comment'] == result['after']['comment']
             assert result['after']['callsign'] == preserved['callsign']
             assert result['after']['qso_date'] == preserved['qso_date']
             assert result['after']['time_on'] == preserved['time_on']
@@ -661,3 +665,368 @@ class TestMultiSourceClustering:
         assert "QRZ" in source_names
         assert "WRL" in source_names
         assert "MSHV" in source_names
+
+
+class TestReconciliationIdempotency:
+    """Teste de idempotência da reconciliação."""
+    
+    def test_reconciliation_is_idempotent(self):
+        """Executar reconciliation 3 vezes deve produzir 1 LogicalQSO, 2 QSOSourceLinks, 3 ReconciliationRuns."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.database import Base
+        from app.models.models import LogicalQSO, QSOSourceLink, ReconciliationRun, Source, NormalizedQSO, RawQSO
+        from app.services.reconciliation_service import ReconciliationService
+        from datetime import datetime
+        
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Criar fontes
+            source_qrz = Source(name="QRZ", type="LOGBOOK")
+            source_wrl = Source(name="WRL", type="LOGBOOK")
+            db.add_all([source_qrz, source_wrl])
+            db.commit()
+            
+            # Criar NormalizedQSOs
+            nq1 = NormalizedQSO(
+                raw_qso_id=1, source_id=source_qrz.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            nq2 = NormalizedQSO(
+                raw_qso_id=2, source_id=source_wrl.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:10",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            db.add_all([nq1, nq2])
+            db.commit()
+            
+            # Executar reconciliation 3 vezes
+            service = ReconciliationService(db)
+            for i in range(3):
+                result = service.run_reconciliation()
+            
+            # Verificar resultados - sem filtro is_active pois o modelo não tem esse campo
+            logical_qsos = db.query(LogicalQSO).all()
+            source_links = db.query(QSOSourceLink).all()
+            runs = db.query(ReconciliationRun).all()
+            
+            assert len(logical_qsos) == 1, f"Expected 1 LogicalQSO, got {len(logical_qsos)}"
+            assert len(source_links) == 2, f"Expected 2 QSOSourceLinks, got {len(source_links)}"
+            assert len(runs) == 3, f"Expected 3 ReconciliationRuns, got {len(runs)}"
+            
+        finally:
+            db.close()
+    
+    def test_reconciliation_evolving_cluster_replaces_active_view(self):
+        """Cluster evolui QRZ+WRL -> QRZ+WRL+MSHV deve substituir visão ativa."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.database import Base
+        from app.models.models import LogicalQSO, QSOSourceLink, ReconciliationRun, Source, NormalizedQSO, RawQSO
+        from app.services.reconciliation_service import ReconciliationService
+        from datetime import datetime
+        
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Criar fontes
+            source_qrz = Source(name="QRZ", type="LOGBOOK")
+            source_wrl = Source(name="WRL", type="LOGBOOK")
+            source_mshv = Source(name="MSHV", type="LOGBOOK")
+            db.add_all([source_qrz, source_wrl, source_mshv])
+            db.commit()
+            
+            # Fase 1: Importar QRZ + WRL
+            nq1 = NormalizedQSO(
+                raw_qso_id=1, source_id=source_qrz.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            nq2 = NormalizedQSO(
+                raw_qso_id=2, source_id=source_wrl.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:10",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            db.add_all([nq1, nq2])
+            db.commit()
+            
+            # Reconcile fase 1
+            service = ReconciliationService(db)
+            service.run_reconciliation()
+            
+            # Verificar fase 1
+            logical_qsos_1 = db.query(LogicalQSO).filter(LogicalQSO.is_active == True).all()
+            source_links_1 = db.query(QSOSourceLink).filter(QSOSourceLink.is_active == True).all()
+            
+            assert len(logical_qsos_1) == 1, f"Phase 1: Expected 1 LogicalQSO, got {len(logical_qsos_1)}"
+            assert len(source_links_1) == 2, f"Phase 1: Expected 2 QSOSourceLinks, got {len(source_links_1)}"
+            
+            # Fase 2: Adicionar MSHV correspondente
+            nq3 = NormalizedQSO(
+                raw_qso_id=3, source_id=source_mshv.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:05",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            db.add(nq3)
+            db.commit()
+            
+            # Reconcile fase 2
+            service.run_reconciliation()
+            
+            # Verificar fase 2 - visão ativa deve ter 1 LogicalQSO com 3 links
+            logical_qsos_2 = db.query(LogicalQSO).filter(LogicalQSO.is_active == True).all()
+            source_links_2 = db.query(QSOSourceLink).filter(QSOSourceLink.is_active == True).all()
+            
+            assert len(logical_qsos_2) == 1, f"Phase 2: Expected 1 LogicalQSO, got {len(logical_qsos_2)}"
+            assert len(source_links_2) == 3, f"Phase 2: Expected 3 QSOSourceLinks, got {len(source_links_2)}"
+            
+            # Verificar que o único LogicalQSO contém QRZ, WRL e MSHV
+            lq = logical_qsos_2[0]
+            lq_source_links = db.query(QSOSourceLink).filter(
+                QSOSourceLink.logical_qso_id == lq.id,
+                QSOSourceLink.is_active == True
+            ).all()
+            source_ids = [sl.source_id for sl in lq_source_links]
+            assert source_qrz.id in source_ids
+            assert source_wrl.id in source_ids
+            assert source_mshv.id in source_ids
+            
+        finally:
+            db.close()
+
+
+class TestDivergenceIdempotency:
+    """Teste de idempotência de divergences."""
+    
+    def test_divergences_do_not_duplicate_across_reconciliation_runs(self):
+        """Após 3 runs com a mesma divergência, active Divergence count = 1."""
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.database import Base
+        from app.models.models import LogicalQSO, QSOSourceLink, ReconciliationRun, Source, NormalizedQSO, Divergence
+        from app.services.reconciliation_service import ReconciliationService
+        from datetime import datetime
+        
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Criar fontes com dados diferentes para gerar divergência
+            source_qrz = Source(name="QRZ", type="LOGBOOK")
+            source_wrl = Source(name="WRL", type="LOGBOOK")
+            db.add_all([source_qrz, source_wrl])
+            db.commit()
+            
+            # Criar NormalizedQSOs com freq diferente (divergência)
+            nq1 = NormalizedQSO(
+                raw_qso_id=1, source_id=source_qrz.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+                band="20M", freq_hz=14076000, mode="FT4",
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            nq2 = NormalizedQSO(
+                raw_qso_id=2, source_id=source_wrl.id,
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:10",
+                band="20M", freq_hz=14076500, mode="FT4",  # Freq diferente
+                operating_mode="FT4", mode_family="DIGITAL"
+            )
+            db.add_all([nq1, nq2])
+            db.commit()
+            
+            # Executar reconciliation 3 vezes
+            service = ReconciliationService(db)
+            for i in range(3):
+                service.run_reconciliation()
+            
+            # Verificar que há apenas 1 divergence ativa
+            active_divergences = db.query(Divergence).filter(Divergence.status == "unresolved").all()
+            
+            assert len(active_divergences) == 1, f"Expected 1 active Divergence, got {len(active_divergences)}"
+            
+        finally:
+            db.close()
+
+
+class TestCompleteLinkRegression:
+    """Teste de regressão para complete-link clustering."""
+    
+    def test_complete_link_prevents_transitive_auto_merge(self):
+        """QRZ-WRL AUTO, WRL-MSHV AUTO, QRZ-MSHV REVIEW => não deve criar LogicalQSO com os três."""
+        from app.reconciliation.engine import ReconciliationEngine, NormalizedQSOData, MatchLevel
+        
+        engine = ReconciliationEngine()
+        
+        # QRZ 12:00:00
+        qso_qrz = NormalizedQSOData(
+            id=1, callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=1, source_name="QRZ"
+        )
+        # WRL 12:00:50 (50s diff from QRZ - AUTO)
+        qso_wrl = NormalizedQSOData(
+            id=2, callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:50",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=2, source_name="WRL"
+        )
+        # MSHV 12:01:40 (50s from WRL = AUTO, but 100s from QRZ = REVIEW)
+        qso_mshv = NormalizedQSOData(
+            id=3, callsign="K1ABC", qso_date="2024-01-15", time_on="12:01:40",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=3, source_name="MSHV"
+        )
+        
+        result = engine.reconcile([qso_qrz, qso_wrl, qso_mshv])
+        
+        # Não deve haver um único LogicalQSO com os três
+        # O complete-link deve impedir merge transitivo
+        assert len(result.logical_qsos) >= 2, \
+            f"Complete-link should prevent transitive merge, got {len(result.logical_qsos)} LogicalQSOs"
+
+
+class TestLogicalQSOStatus:
+    """Teste de status do LogicalQSO."""
+    
+    def test_exact_multisource_status_is_reconciled(self):
+        """QRZ 12:00:00 + WRL 12:00:10 => 1 LogicalQSO com status reconciled."""
+        from app.reconciliation.engine import ReconciliationEngine, NormalizedQSOData
+        
+        engine = ReconciliationEngine()
+        
+        qso_qrz = NormalizedQSOData(
+            id=1, callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=1, source_name="QRZ"
+        )
+        qso_wrl = NormalizedQSOData(
+            id=2, callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:10",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=2, source_name="WRL"
+        )
+        
+        result = engine.reconcile([qso_qrz, qso_wrl])
+        
+        assert len(result.logical_qsos) == 1
+        assert result.logical_qsos[0]['status'] == 'reconciled'
+    
+    def test_ambiguous_no_time_status_is_needs_review(self):
+        """QRZ sem TIME_ON, WRL 12:00, MSHV 18:00 => QRZ LogicalQSO = needs_review."""
+        from app.reconciliation.engine import ReconciliationEngine, NormalizedQSOData, MatchStatus
+        
+        engine = ReconciliationEngine()
+        
+        # QRZ sem TIME_ON
+        qso_qrz = NormalizedQSOData(
+            id=1, callsign="K1ABC", qso_date="2024-01-15", time_on=None,
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=1, source_name="QRZ"
+        )
+        qso_wrl = NormalizedQSOData(
+            id=2, callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=2, source_name="WRL"
+        )
+        qso_mshv = NormalizedQSOData(
+            id=3, callsign="K1ABC", qso_date="2024-01-15", time_on="18:00:00",
+            band="20M", freq_hz=14076000, mode="FT4", submode=None, operating_mode="FT4",
+            mode_family="DIGITAL", rst_sent="599", rst_rcvd="599", grid="GG55",
+            source_id=3, source_name="MSHV"
+        )
+        
+        result = engine.reconcile([qso_qrz, qso_wrl, qso_mshv])
+        
+        # Deve haver pelo menos 2 LogicalQSOs (WRL e MSHV separados, QRZ precisa review)
+        assert len(result.logical_qsos) >= 2
+        
+        # Verificar que há matches com status REVISAO_MANUAL envolvendo o QSO sem tempo
+        has_manual_review = any(
+            match.match_status in (MatchStatus.REVISAO_MANUAL, MatchStatus.MANUAL_REVIEW, MatchStatus.POSSIBLE_MATCH)
+            for match in result.matches
+            if match.qso1_id == 1 or match.qso2_id == 1
+        )
+        assert has_manual_review, "QSO without time should have manual review matches"
+
+
+def test_divergences_endpoint_returns_200():
+    """Teste do endpoint /api/qsos/divergences retornar HTTP 200."""
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app.db.database import Base, get_db
+    from app.main import app
+    from app.models.models import Divergence, LogicalQSO, Source
+    
+    engine = create_engine("sqlite:///:memory:")
+    Base.metadata.create_all(engine)
+    SessionLocal = sessionmaker(bind=engine)
+    
+    def override_get_db():
+        db = SessionLocal()
+        try:
+            yield db
+        finally:
+            db.close()
+    
+    app.dependency_overrides[get_db] = override_get_db
+    
+    try:
+        client = TestClient(app)
+        
+        # Criar dados de teste
+        db = SessionLocal()
+        source = Source(name="TEST", type="TEST")
+        db.add(source)
+        db.commit()
+        
+        lq = LogicalQSO(
+            uuid="test-uuid-div",
+            callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
+            band="20M", freq_hz=14076000, mode="FT4"
+        )
+        db.add(lq)
+        db.commit()
+        db.refresh(lq)
+        
+        div = Divergence(
+            logical_qso_id=lq.id,
+            field_name="freq_hz",
+            source_1_value="14076000",
+            source_1_name="QRZ",
+            source_2_value="14076500",
+            source_2_name="WRL",
+            status="unresolved"
+        )
+        db.add(div)
+        db.commit()
+        
+        # Testar endpoint
+        response = client.get("/api/qsos/divergences")
+        assert response.status_code == 200, f"Expected 200, got {response.status_code}: {response.text}"
+        
+        data = response.json()
+        assert isinstance(data, list)
+        assert len(data) >= 1
+        
+    finally:
+        app.dependency_overrides.clear()
