@@ -29,6 +29,35 @@ class QSOUpdateService:
     def __init__(self, db: Session):
         self.db = db
     
+    def _validate_changes(self, changes: Dict[str, Any]) -> None:
+        """Validate that changes only contain editable fields.
+        
+        Args:
+            changes: Dictionary of field changes to validate
+            
+        Raises:
+            ValueError: If any protected or unknown fields are present
+        """
+        change_keys = set(changes.keys())
+        
+        # Check for protected fields first
+        protected_found = change_keys & self.PROTECTED_FIELDS
+        if protected_found:
+            raise ValueError(
+                f"Cannot modify protected fields: {sorted(protected_found)}. "
+                f"Protected fields are: {sorted(self.PROTECTED_FIELDS)}"
+            )
+        
+        # Check for unknown fields (not in EDITABLE_FIELDS and not model fields)
+        all_model_fields = {c.name for c in LogicalQSO.__table__.columns}
+        unknown_found = change_keys - self.EDITABLE_FIELDS - all_model_fields
+        
+        if unknown_found:
+            raise ValueError(
+                f"Cannot modify unknown/invalid fields: {sorted(unknown_found)}. "
+                f"Editable fields are: {sorted(self.EDITABLE_FIELDS)}"
+            )
+    
     def update_by_uuid(
         self, 
         qso_uuid: str, 
@@ -44,17 +73,23 @@ class QSOUpdateService:
             
         Returns:
             Updated LogicalQSO or None if not found
+            
+        Raises:
+            ValueError: If changes contain protected or unknown fields
         """
+        # Validate changes FIRST - reject protected/unknown fields explicitly
+        self._validate_changes(changes)
+        
         # Query by UUID, not by integer id
         qso = self.db.query(LogicalQSO).filter(LogicalQSO.uuid == qso_uuid).first()
         
         if qso is None:
             return None
         
-        # Filter out protected fields
+        # Filter out protected fields (already validated, but be safe)
         safe_changes = {
             k: v for k, v in changes.items() 
-            if k in self.EDITABLE_FIELDS and k not in self.PROTECTED_FIELDS
+            if k in self.EDITABLE_FIELDS
         }
         
         # Apply changes only to the specified QSO
@@ -66,6 +101,22 @@ class QSOUpdateService:
         self.db.refresh(qso)
         
         return qso
+    
+    def build_safe_update(self, changes: Dict[str, Any]) -> Dict[str, Any]:
+        """Build a preview of safe changes without applying them.
+        
+        Args:
+            changes: Dictionary of field changes to preview
+            
+        Returns:
+            Dictionary with validated changes
+            
+        Raises:
+            ValueError: If changes contain protected or unknown fields
+        """
+        # Validate changes FIRST
+        self._validate_changes(changes)
+        return changes.copy()
     
     def update_qso(self, qso_id: str, changes: Dict[str, Any]) -> Optional[LogicalQSO]:
         """Update a specific LogicalQSO by its UUID.
