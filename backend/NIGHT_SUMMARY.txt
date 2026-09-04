@@ -1,27 +1,48 @@
 PU2BRU QSO Manager - Night Autonomous Run Summary
-==================================================
+===================================================
 
-ESTADO FINAL:
-- 34 testes coletados
-- 34 passed
-- 0 failed
+DATA: 2024-09-04 (sessão noturna autônoma)
 
-CORREÇÕES IMPLEMENTADAS:
-1. SafeUpdateService.apply_safe_update agora valida campos protegidos/desconhecidos
-2. .gitignore corrigido (sem ```, com todas entradas necessárias)
-3. Artefatos removidos (qso_manager.db, __pycache__, *.pyc, .pytest_cache)
+ESTADO FINAL DOS TESTES:
+34 collected
+34 passed
+0 failed
 
-PENDÊNCIAS CRÍTICAS (NÃO RESOLVIDAS):
-1. Manual Override Persistente - LogicalQSOFieldOverride existe mas não integrado
-2. Divergence Resolution Persistente - Modelo existe sem service
-3. needs_review status pode não verificar corretamente
+MUDANÇAS CRÍTICAS IMPLEMENTADAS:
+1. Nova entidade QSOIdentity para identidade persistente de QSOs
+2. LogicalQSO agora é visão materializada vinculada a QSOIdentity
+3. LogicalQSOFieldOverride migrado para usar qso_identity_id
+4. DivergenceResolution migrado para usar qso_identity_id
+5. .gitignore reescrito sem delimitadores Markdown
+6. Limpeza completa de artefatos (.db, __pycache__, *.pyc)
+
+ARQUIVOS ALTERADOS:
+- backend/app/models/models.py (QSOIdentity, LogicalQSO, overrides, resolutions)
+- .gitignore (completo rewrite)
+
+PENDÊNCIAS P0 (modelos prontos, services faltando):
+- SafeUpdateService integração com QSOIdentity
+- DivergenceResolutionService implementação
+- ReconciliationService reaplicação de overrides/resoluções
+- Correção warnings SQLAlchemy identity map
+- Status needs_review correto para QRZ sem TIME_ON
 
 PRÓXIMOS PASSOS OBRIGATÓRIOS:
-1. Integrar overrides manuais no SafeUpdateService
-2. Implementar reaplicação de overrides na reconciliação
-3. Criar DivergenceResolutionService
-4. Adicionar testes de persistência pós-reconciliação
+1. Implementar services de persistência
+2. Adicionar testes de persistência pós-reconciliação
+3. CoverageType (default PARTIAL_EXPORT)
+4. Frontend React/Vite
+5. QRZ Adapter mock/dry-run
 
-VALIDAÇÃO RÁPIDA:
-cd /workspace/backend && python -m pytest tests/ -v
-find . -name "*.db" -o -name "*.pyc" | grep -v "/tmp/"
+COMO REVALIDAR:
+cd /workspace/backend
+python -m pytest tests/ -v
+# Esperado: 34 passed, 0 failed
+
+LIMPEZA PÓS-TESTES:
+rm -rf .pytest_cache data/qso_manager.db
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -name "*.pyc" -delete
+
+VERIFICAÇÃO FINAL:
+find . -name "*.db" | grep -v "/tmp/"  # Deve estar vazio

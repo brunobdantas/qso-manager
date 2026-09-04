@@ -1,114 +1,171 @@
 # PU2BRU QSO Manager — Night Autonomous Run
 
-## Estado Inicial
+## Estado inicial
 
-- **Data/Hora:** 2024-01-XX (sessão noturna autônoma)
-- **Testes coletados:** 34
-- **Passed:** 34
-- **Failed:** 0
-- **Warnings:** 142 (deprecations SQLAlchemy/Pydantic/datetime)
+- **Data/hora**: 2024-09-04 (sessão noturna autônoma)
+- **Testes iniciais**: 34 collected, 34 passed, 0 failed
+- **Warnings**: 142 warnings (depreciação datetime.utcnow + SAWarning identity map)
+- **Principais problemas identificados pela auditoria externa**:
+  1. LogicalQSO.uuid muda quando cluster evolui (QRZ+WRL → UUID A, QRZ+WRL+MSHV → UUID B)
+  2. Overrides manuais são perdidos após reconciliação
+  3. Resoluções de divergência desaparecem após reconciliation
+  4. Status needs_review não verifica corretamente o LogicalQSO específico
+  5. .gitignore com delimitadores Markdown ```
+  6. Arquivos proibidos versionados (qso_manager.db, __pycache__, *.pyc)
 
-## Problemas Encontrados e Corrigidos
+## Estrutura de Identidade Persistente Implementada
 
-### P0-1: apply_safe_update não validava campos protegidos
-**Problema:** O método `apply_safe_update` do SafeUpdateService não chamava `_validate_changes`, permitindo que campos protegidos como `uuid` fossem modificados silenciosamente.
+### Nova entidade: QSOIdentity
 
-**Correção:** Adicionada chamada a `self._validate_changes(changes)` no início do método `apply_safe_update`.
-
-### P0-5: .gitignore com delimitadores Markdown e artefatos no workspace
-**Problema:** O arquivo `.gitignore` continha ``` no conteúdo e existiam arquivos proibidos versionados:
-- backend/data/qso_manager.db
-- __pycache__/ em múltiplos diretórios
-- *.pyc files
-- .pytest_cache/
-
-**Correção:** 
-- Substituído completamente o `.gitignore` sem delimitadores Markdown
-- Removidos fisicamente todos os arquivos de cache e banco de dados
-
-## Arquivos Alterados
-
-1. `/workspace/.gitignore` - Completamente reescrito
-2. `/workspace/backend/app/services/safe_update_service.py` - Adicionada validação em `apply_safe_update`
-
-## Testes Existentes (34 total)
-
-Todos passando:
-- test_adif_parser.py (7 testes)
-- test_reconciliation.py (23 testes)
-- test_safe_update.py (4 testes)
-
-## Smoke Tests Realizados
-
-### Validação SQLite
-```bash
-find . -name "*.db"  # vazio (exceto tmp)
-find . -name "*.pyc"  # vazio
-find . -name "__pycache__"  # vazio
-find . -name ".pytest_cache"  # vazio
+```python
+class QSOIdentity(Base):
+    \"\"\"Persistent identity for a QSO that survives reconciliation and cluster evolution.\"\"\"
+    uuid: str  # NUNCA muda para o mesmo QSO real
+    callsign: str
+    qso_date: str
+    time_on: str
+    
+    # Relacionamentos:
+    - logical_qsos (visões materializadas)
+    - overrides (LogicalQSOFieldOverride)
+    - resolutions (DivergenceResolution)
 ```
 
-### Gitignore Validado
-Conteúdo válido sem ``` incluindo:
-- .env, .env.*, !.env.example
-- *.db, *.sqlite, *.sqlite3
-- __pycache__/, *.pyc, *.pyo, .pytest_cache/
-- .venv/, venv/
-- node_modules/, dist/, build/
-- backend/data/*, !backend/data/.gitkeep
-- backups/*, imports/*, exports/*, logs/*
+### LogicalQSO agora é visão materializada
 
-## Pendências Críticas (Não Implementadas Nesta Sessão)
+```python
+class LogicalQSO(Base):
+    \"\"\"Materialized active view of a QSO identity at current reconciliation state.\"\"\"
+    qso_identity_id: int  # FK para QSOIdentity
+    # ... campos canônicos recalculados a cada reconciliation
+```
 
-### 1. Manual Override Persistente (P0-1 da auditoria externa)
-**Status:** Modelo `LogicalQSOFieldOverride` existe mas NÃO está integrado.
-**Risco:** Alterações manuais (ex: county="Campinas") são PERDIDAS após nova reconciliação.
+### Modelos atualizados para usar identidade persistente
 
-### 2. Divergence Resolution Persistente (P0-2)
-**Status:** Modelo `DivergenceResolution` existe mas NÃO há service implementado.
-**Risco:** Resoluções humanas de divergências desaparecem após reconciliação.
+1. **LogicalQSOFieldOverride**:
+   - Antes: `logical_qso_uuid` → FK para LogicalQSO.uuid (instável)
+   - Agora: `qso_identity_id` → FK para QSOIdentity.id (estável)
 
-### 3. needs_review Status (P0-4)
-**Status:** Teste `test_ambiguous_no_time_status_is_needs_review` passa mas pode não verificar corretamente o status do LogicalQSO específico.
+2. **DivergenceResolution**:
+   - Antes: `logical_qso_uuid` → FK para LogicalQSO.uuid (instável)
+   - Agora: `qso_identity_id` → FK para QSOIdentity.id (estável)
+   - `divergence_key`: fingerprint estável baseado em identity + field + sources
 
-## Decisões Arquiteturais Documentadas
+## Arquivos alterados
 
-1. **Safe Update Validation Centralizada:** Método `_validate_changes()` valida antes de qualquer operação.
-2. **UUID como Identidade Externa:** Todas as operações usam `LogicalQSO.uuid` (string), nunca ID inteiro.
-3. **Reconstrução Atômica:** A visão ativa (LogicalQSO, QSOSourceLink, Divergence) é reconstruída atomicamente durante reconciliação.
-4. **Histórico Preservado:** ReconciliationRun e ReconciliationMatch são preservados como histórico.
+1. **backend/app/models/models.py**:
+   - Adicionada classe `QSOIdentity` (linhas 232-255)
+   - Modificada classe `LogicalQSO` para incluir `qso_identity_id` e relationship
+   - Atualizado `LogicalQSOFieldOverride` para usar `qso_identity_id`
+   - Atualizado `DivergenceResolution` para usar `qso_identity_id`
 
-## Riscos Conhecidos
+2. **.gitignore**:
+   - Substituído completamente sem delimitadores Markdown
+   - Incluídos: .env, *.db, __pycache__/, .pytest_cache/, venv/, node_modules/, etc.
 
-1. **SAWarnings de Identity Map:** Reconstrução atômica gera warnings ao substituir objetos no identity map do SQLAlchemy.
-2. **Overrides Manuais Não Persistem:** Alterações via SafeUpdateService são perdidas na próxima reconciliação.
-3. **Resoluções de Divergência Não Persistem:** Decisões humanas sobre divergências são perdidas.
+3. **Limpeza de artefatos**:
+   - Removido: backend/data/qso_manager.db
+   - Removidos: todos __pycache__/
+   - Removidos: todos *.pyc
+   - Removido: .pytest_cache/
 
-## Como Revalidar Amanhã
+## Testes existentes (34 testes)
+
+Todos os 34 testes originais continuam passando:
+- test_reconciliation_is_idempotent ✓
+- test_reconciliation_evolving_cluster_replaces_active_view ✓
+- test_divergences_do_not_duplicate_across_reconciliation_runs ✓
+- test_complete_link_prevents_transitive_auto_merge ✓
+- test_exact_multisource_status_is_reconciled ✓
+- test_ambiguous_no_time_status_is_needs_review ✓
+- test_divergences_endpoint_returns_200 ✓
+- test_safe_update_rejects_protected_fields ✓
+- test_safe_update_rejects_unknown_fields ✓
+- test_safe_update_by_uuid_preserves_other_fields ✓
+- test_qso_update_rejects_protected_fields ✓
+- ... (23 outros)
+
+## Pendências Críticas (P0)
+
+### P0-1: Integração do SafeUpdateService com QSOIdentity
+**Status**: Modelo pronto, service precisa ser implementado
+**O que falta**: 
+- SafeUpdateService.apply_safe_update deve criar/atualizar LogicalQSOFieldOverride
+- ReconciliationService deve reaplicar overrides após reconstruir LogicalQSO
+
+### P0-2: DivergenceResolutionService
+**Status**: Modelo pronto, service não existe
+**O que falta**:
+- Implementar serviço para criar/atualizar resoluções
+- ReconciliationService deve reaplicar resoluções existentes
+
+### P0-3: Status needs_review correto
+**Status**: Teste existe mas pode não verificar status corretamente
+**O que falta**:
+- Verificar se teste localiza LogicalQSO específico contendo QRZ sem TIME_ON
+- Corrigir engine para considerar candidatos externos plausíveis
+
+### P0-4: Warnings SQLAlchemy
+**Status**: 142 warnings durante reconciliation
+**Problema**: Identity map conflicts durante delete/recreate
+**Solução necessária**: Usar synchronize_session=False ou sessão separada
+
+## Próximos passos obrigatórios
+
+1. Implementar SafeUpdateService integrado com QSOIdentity
+2. Implementar reconciliação de overrides persistentes
+3. Criar DivergenceResolutionService
+4. Implementar reconciliação de resoluções persistentes
+5. Corrigir warnings SQLAlchemy
+6. Adicionar testes de persistência pós-reconciliação
+7. Implementar CoverageType (default PARTIAL_EXPORT)
+8. Frontend React/Vite
+9. QRZ Adapter mock/dry-run
+
+## Como revalidar
 
 ```bash
 cd /workspace/backend
 python -m pytest tests/ -v
 # Esperado: 34 collected, 34 passed, 0 failed
 
-# Verificar limpeza de artefatos:
-find . -name "*.db" -o -name "*.pyc" -o -name "__pycache__" | grep -v "/tmp/"
-# Esperado: vazio
+# Limpeza pós-testes:
+rm -rf .pytest_cache data/qso_manager.db
+find . -type d -name "__pycache__" -exec rm -rf {} +
+find . -name "*.pyc" -delete
 
-cat ../.gitignore
-# Verificar ausência de ```
+# Verificar limpeza:
+cd /workspace
+find . -name "*.db" | grep -v "/tmp/"  # Deve retornar vazio
 ```
 
-## Próximos Passos Obrigatórios
+## Smoke tests pendentes
 
-1. Integrar `LogicalQSOFieldOverride` no SafeUpdateService.apply_safe_update
-2. Implementar reaplicação de overrides durante reconciliação
-3. Criar `DivergenceResolutionService` para persistir resoluções
-4. Integrar resoluções na engine de reconciliação
-5. Adicionar testes de persistência pós-reconciliação
-6. Implementar cobertura (CoverageType) correta
-7. Frontend React/Vite real
-8. QRZ Adapter mock/dry-run
+- [ ] GET /api/health = 200
+- [ ] GET /api/qsos = 200
+- [ ] GET /api/qsos/normalized = 200
+- [ ] GET /api/qsos/divergences = 200
+- [ ] POST /api/imports/adif (QRZ) = 200
+- [ ] POST /api/imports/adif (WRL) = 200
+- [ ] POST /api/reconciliation × 3 = 200
+- [ ] Verificar SQLite: LogicalQSO=1, Links=2, Runs=3
+
+## Decisões arquiteturais
+
+1. **Separação identidade vs. visão materializada**: QSOIdentity representa o QSO real do mundo, LogicalQSO é a visão atual reconstruída a cada reconciliation.
+
+2. **Overrides e resoluções ligadas à identidade**: Dados humanos persistem mesmo quando cluster evolui.
+
+3. **Reconstrução atômica preservada**: DELETE + recreate da visão ativa continua, mas agora com identidade persistente separada.
+
+## Riscos conhecidos
+
+1. **SAWarnings durante reconciliation**: Identity map conflicts podem causar problemas em produção com dados reais.
+
+2. **Migração de dados existentes**: Banco existente teria que ser migrado para nova estrutura QSOIdentity.
+
+3. **Performance**: Recriar toda visão ativa + reaplicar overrides pode ser lento com muitos QSOs.
 
 ---
-*Relatório gerado automaticamente durante sessão noturna autônoma.*
+
+*Relatório gerado automaticamente durante execução noturna autônoma.*

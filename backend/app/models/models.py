@@ -229,12 +229,45 @@ class NormalizedQSO(Base):
     )
 
 
+class QSOIdentity(Base):
+    """Persistent identity for a QSO that survives reconciliation and cluster evolution.
+    
+    This represents the real-world contact event, independent of how many sources
+    report it or how the clustering algorithm groups them.
+    """
+    __tablename__ = "qso_identities"
+    
+    id = Column(Integer, primary_key=True, index=True)
+    uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()), index=True)
+    
+    # Core identifying fields (used for matching across reconciliations)
+    callsign = Column(String(20), nullable=False, index=True)
+    qso_date = Column(String(10), nullable=False, index=True)
+    time_on = Column(String(8), index=True)  # Can be null for some sources
+    
+    # Timestamps
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    logical_qsos = relationship("LogicalQSO", back_populates="identity")
+    overrides = relationship("LogicalQSOFieldOverride", back_populates="identity")
+    resolutions = relationship("DivergenceResolution", back_populates="identity")
+
+
 class LogicalQSO(Base):
-    """Canonical QSO constructed from reconciled sources."""
+    """Materialized active view of a QSO identity at current reconciliation state.
+    
+    This is rebuilt during each reconciliation run. Persistent data (overrides,
+    resolutions) should be linked to QSOIdentity, not to this transient view.
+    """
     __tablename__ = "logical_qsos"
     
     id = Column(Integer, primary_key=True, index=True)
     uuid = Column(String(36), unique=True, nullable=False, default=lambda: str(uuid.uuid4()))
+    
+    # Link to persistent identity
+    qso_identity_id = Column(Integer, ForeignKey("qso_identities.id"), nullable=True, index=True)
     
     # Canonical values (field-by-field reconciliation)
     callsign = Column(String(20), nullable=False, index=True)
@@ -277,6 +310,7 @@ class LogicalQSO(Base):
     # Relationships
     source_links = relationship("QSOSourceLink", back_populates="logical_qso")
     divergences = relationship("Divergence", back_populates="logical_qso")
+    identity = relationship("QSOIdentity", back_populates="logical_qsos")
 
 
 class QSOSourceLink(Base):
@@ -498,11 +532,14 @@ class Settings(Base):
 # ============================================================================
 
 class LogicalQSOFieldOverride(Base):
-    """Persistent manual overrides for LogicalQSO fields that survive reconciliation."""
+    """Persistent manual overrides for QSO fields that survive reconciliation.
+    
+    Links to QSOIdentity rather than LogicalQSO to survive cluster evolution.
+    """
     __tablename__ = "logical_qso_field_overrides"
 
     id = Column(Integer, primary_key=True, index=True)
-    logical_qso_uuid = Column(String(36), ForeignKey("logical_qsos.uuid"), nullable=False, index=True)
+    qso_identity_id = Column(Integer, ForeignKey("qso_identities.id"), nullable=False, index=True)
     field_name = Column(String(50), nullable=False)
     original_value = Column(Text)
     override_value = Column(Text, nullable=False)
@@ -512,18 +549,25 @@ class LogicalQSOFieldOverride(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationship
+    identity = relationship("QSOIdentity", back_populates="overrides")
+
     __table_args__ = (
-        Index('idx_override_uuid_field', 'logical_qso_uuid', 'field_name'),
+        Index('idx_override_identity_field', 'qso_identity_id', 'field_name'),
     )
 
 
 class DivergenceResolution(Base):
-    """Persistent resolution for divergences that survives reconciliation."""
+    """Persistent resolution for divergences that survives reconciliation.
+    
+    Links to QSOIdentity rather than LogicalQSO to survive cluster evolution.
+    The divergence_key is a stable fingerprint based on identity + field + sources.
+    """
     __tablename__ = "divergence_resolutions"
 
     id = Column(Integer, primary_key=True, index=True)
+    qso_identity_id = Column(Integer, ForeignKey("qso_identities.id"), nullable=False, index=True)
     divergence_key = Column(String(255), nullable=False, index=True)  # SHA256 fingerprint
-    logical_qso_uuid = Column(String(36), ForeignKey("logical_qsos.uuid"), nullable=False, index=True)
     field_name = Column(String(50), nullable=False)
     source_1_name = Column(String(100))
     source_2_name = Column(String(100))
@@ -533,6 +577,9 @@ class DivergenceResolution(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
+    # Relationship
+    identity = relationship("QSOIdentity", back_populates="resolutions")
+
     __table_args__ = (
-        Index('idx_resolution_key', 'divergence_key'),
+        Index('idx_resolution_identity_key', 'qso_identity_id', 'divergence_key'),
     )
