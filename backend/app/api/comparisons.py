@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from ..services.adif_comparison_service import ADIFComparisonService
+from ..services.fast_adif_comparison_service import FastADIFComparisonService
 
 router = APIRouter(prefix="/api/comparisons", tags=["comparisons"])
 
@@ -26,7 +26,7 @@ def compare_adif(request: ADIFComparisonRequest):
     if request.a.source.strip().upper() == request.b.source.strip().upper():
         raise HTTPException(status_code=400, detail="As duas fontes precisam ter nomes diferentes.")
     try:
-        return ADIFComparisonService().compare(
+        return FastADIFComparisonService().compare(
             content_a=request.a.content,
             content_b=request.b.content,
             source_a=request.a.source.strip().upper(),
