@@ -24,9 +24,10 @@ def make_qso(
     date: str = "2024-01-15",
     time: str = "12:00:00",
     band: str = "20M",
-    freq: float = 14076.0,
+    freq_hz: int = 14076000,  # Frequency in Hz (14.076 MHz * 1000000)
     mode: str = "FT4",
     mode_family: str = "DIGITAL",
+    operating_mode: str = "FT4",
     source_id: int = 1,
     source_name: str = "QRZ",
     grid: str = "GG55",
@@ -38,10 +39,10 @@ def make_qso(
         qso_date=date,
         time_on=time,
         band=band,
-        freq=freq,
+        freq_hz=freq_hz,
         mode=mode,
         submode=None,
-        operating_mode=mode,
+        operating_mode=operating_mode,
         mode_family=mode_family,
         rst_sent="599",
         rst_rcvd="599",
@@ -219,12 +220,12 @@ class TestFrequencyTolerance:
     """TESTE H: Frequency tolerance."""
     
     def test_freq_210761_vs_210769_tolerance(self):
-        """TESTE H: Frequency 21076.1 vs 21076.9 kHz -> within tolerance."""
+        """TESTE H: Frequency 21076100 vs 21076900 Hz (800 Hz diff) -> within tolerance."""
         engine = ReconciliationEngine()
         
         qso1 = make_qso(
             id_=1,
-            freq=21076.1,
+            freq_hz=21076100,
             source_id=1,
             source_name="QRZ",
             time="12:00:00",
@@ -232,7 +233,7 @@ class TestFrequencyTolerance:
         
         qso2 = make_qso(
             id_=2,
-            freq=21076.9,
+            freq_hz=21076900,
             source_id=2,
             source_name="WRL",
             time="12:00:10",
@@ -240,9 +241,9 @@ class TestFrequencyTolerance:
         
         result = engine.reconcile([qso1, qso2])
         
-        # Difference is 0.8 kHz, within 3.0 kHz digital tolerance
+        # Difference is 800 Hz, within 1000 Hz tolerance
         assert len(result.matches) == 1
-        assert result.matches[0].freq_diff == 0.8  # kHz
+        assert result.matches[0].freq_diff == 800  # Hz
 
 
 class TestLevelENoAutoMerge:

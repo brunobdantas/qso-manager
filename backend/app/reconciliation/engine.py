@@ -328,8 +328,8 @@ class ReconciliationEngine:
                 reasoning.append(f"Operating mode matches: {qso1.operating_mode}")
         
         # Frequency comparison (with tolerance)
-        if qso1.freq and qso2.freq:
-            freq_diff_khz = abs(qso1.freq - qso2.freq) / 1000  # Hz to kHz
+        if qso1.freq_hz and qso2.freq_hz:
+            freq_diff_khz = abs(qso1.freq_hz - qso2.freq_hz) / 1000  # Hz to kHz
             tolerance = self._get_freq_tolerance(qso1.mode_family)
             
             if freq_diff_khz <= tolerance:
@@ -397,8 +397,8 @@ class ReconciliationEngine:
             time_diff = abs(qso1.time_seconds - qso2.time_seconds)
         
         freq_diff = None
-        if qso1.freq and qso2.freq:
-            freq_diff = abs(qso1.freq - qso2.freq)
+        if qso1.freq_hz and qso2.freq_hz:
+            freq_diff = abs(qso1.freq_hz - qso2.freq_hz)
         
         return MatchCandidate(
             qso1_id=qso1.id,
@@ -463,7 +463,7 @@ class ReconciliationEngine:
             'time_on': base.time_on,
             'time_off': base.time_off if hasattr(base, 'time_off') else None,
             'band': base.band,
-            'freq': base.freq,
+            'freq_hz': base.freq_hz,
             'mode': base.mode,
             'submode': base.submode,
             'operating_mode': base.operating_mode,
@@ -491,7 +491,7 @@ class ReconciliationEngine:
         
         for qso in qsos[1:]:
             # Fill in missing fields
-            for field in ['time_on', 'band', 'freq', 'mode', 'grid', 'rst_sent']:
+            for field in ['time_on', 'band', 'freq_hz', 'mode', 'grid', 'rst_sent']:
                 if not canonical.get(field) and getattr(qso, field, None):
                     canonical[field] = getattr(qso, field)
                     provenance[field] = {
@@ -520,7 +520,7 @@ class ReconciliationEngine:
     
     def _detect_divergences(self, logical_uuid: str, qsos: List[NormalizedQSOData]):
         """Detect field divergences between sources."""
-        fields_to_check = ['freq', 'mode', 'band', 'grid', 'rst_sent', 'time_on']
+        fields_to_check = ['freq_hz', 'mode', 'band', 'grid', 'rst_sent', 'time_on']
         
         for field in fields_to_check:
             values = {}
