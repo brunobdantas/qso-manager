@@ -8,9 +8,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from app.core.config import settings
+from app.core.runtime import ensure_runtime_dirs
 
-# Ensure data directory exists
-os.makedirs(os.path.dirname("data/"), exist_ok=True)
+ensure_runtime_dirs()
 
 engine = create_engine(
     settings.database_url,
