@@ -1,0 +1,25 @@
+name: Release 1 Acceptance
+
+on:
+  push:
+    branches: [main, release1-backend-core]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  backend-acceptance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Run immutable Release 1 acceptance
+        run: python acceptance/run_release1_acceptance.py

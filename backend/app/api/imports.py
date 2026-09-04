@@ -18,8 +18,11 @@ async def import_adif(
     source_name: str = Body(..., embed=True),
     filename: Optional[str] = Body(default="inline.adif", embed=True),
     source_type: str = Body(default="LOGBOOK", embed=True),
-    coverage_type: str = Body(default="FULL_EXPORT", embed=True),
+    coverage_type: str = Body(default="PARTIAL_EXPORT", embed=True),
     reliability_score: float = Body(default=0.5, embed=True),
+    coverage_start: Optional[str] = Body(default=None, embed=True),
+    coverage_end: Optional[str] = Body(default=None, embed=True),
+    coverage_metadata: Optional[dict] = Body(default=None, embed=True),
     db: Session = Depends(get_db),
 ):
     """
@@ -42,6 +45,9 @@ async def import_adif(
         source_type=source_type,
         coverage_type=CoverageType(coverage_type),
         reliability_score=reliability_score,
+        coverage_start=__import__("datetime").datetime.fromisoformat(coverage_start) if coverage_start else None,
+        coverage_end=__import__("datetime").datetime.fromisoformat(coverage_end) if coverage_end else None,
+        coverage_metadata=coverage_metadata,
     )
     
     if result["status"] == "failed":

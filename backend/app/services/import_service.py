@@ -28,8 +28,11 @@ class ADIFImportService:
         filename: str,
         source_name: str,
         source_type: str = "LOGBOOK",
-        coverage_type: CoverageType = CoverageType.FULL_EXPORT,
+        coverage_type: CoverageType = CoverageType.PARTIAL_EXPORT,
         reliability_score: float = 0.5,
+        coverage_start: Optional[datetime] = None,
+        coverage_end: Optional[datetime] = None,
+        coverage_metadata: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         """
         Import ADIF content into the database.
@@ -56,6 +59,9 @@ class ADIFImportService:
             import_record = Import(
                 source_id=source.id,
                 coverage_type=coverage_type,
+                coverage_start=coverage_start,
+                coverage_end=coverage_end,
+                coverage_metadata=coverage_metadata,
                 status="processing",
                 started_at=datetime.utcnow(),
             )
@@ -125,10 +131,9 @@ class ADIFImportService:
                 new_files = 1
                 already_imported_files = 0
             
-            self.db.commit()
-            
-            # Log audit event
+            # Persist import and its append-only audit atomically.
             self._log_audit(import_record, already_imported)
+            self.db.commit()
             
             return {
                 "import_id": import_record.id,
