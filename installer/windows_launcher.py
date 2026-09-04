@@ -81,10 +81,18 @@ def _run_self_test() -> int:
                 return 12
 
         paths = {route.path for route in app.routes}
-        if "/api/health" not in paths or "/api/integrations/status" not in paths:
+        required = {"/api/health", "/api/integrations/status", "/api/cloud/status", "/api/cloud/analysis"}
+        if not required.issubset(paths):
             return 13
         if not user_data_root().exists():
             return 14
+
+        # Import the connected hub in the same frozen process. This validates
+        # crypto/http adapters and persistent snapshot modules are bundled.
+        from app.services.cloud_hub_fast_service import CloudHubService
+        cloud_status = CloudHubService().status()
+        if cloud_status.get("truth_source") != "QRZ" or len(cloud_status.get("providers", [])) != 4:
+            return 16
 
         # Exercise the same Uvicorn configuration used by the GUI startup.
         # This catches formatter/console regressions in the packaged binary.
@@ -153,7 +161,7 @@ def _run_gui() -> int:
     tk.Label(frame, text="PU2BRU QSO Manager", font=("Segoe UI", 17, "bold")).pack(anchor="w")
     tk.Label(
         frame,
-        text="Aplicação local de reconciliação e auditoria de QSOs",
+        text="Central local para baixar, reconciliar e gerenciar QSOs",
         font=("Segoe UI", 10),
     ).pack(anchor="w", pady=(4, 14))
     tk.Label(frame, textvariable=status_var, font=("Segoe UI", 10), wraplength=420, justify="left").pack(anchor="w")
