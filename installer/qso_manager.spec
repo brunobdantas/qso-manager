@@ -1,15 +1,26 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+import sys
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_submodules
+
+SPEC_DIR = Path(SPEC).resolve().parent
+ROOT_DIR = SPEC_DIR.parent
+BACKEND_DIR = ROOT_DIR / 'backend'
+FRONTEND_DIST = ROOT_DIR / 'frontend' / 'dist'
+
+sys.path.insert(0, str(BACKEND_DIR))
 
 hiddenimports = collect_submodules('app') + collect_submodules('uvicorn') + [
     'sqlalchemy.dialects.sqlite.pysqlite',
 ]
 
 a = Analysis(
-    ['installer/windows_launcher.py'],
-    pathex=['backend'],
+    [str(SPEC_DIR / 'windows_launcher.py')],
+    pathex=[str(BACKEND_DIR)],
     binaries=[],
-    datas=[('frontend/dist', 'frontend/dist')],
+    datas=[(str(FRONTEND_DIST), 'frontend/dist')],
     hiddenimports=hiddenimports,
     hookspath=[],
     hooksconfig={},
