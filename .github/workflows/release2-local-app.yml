@@ -1,0 +1,38 @@
+name: Release 2 Local App
+
+on:
+  push:
+    branches: [release2-local-app]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  local-app:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package.json
+      - name: Install backend dependencies
+        run: python -m pip install -r backend/requirements.txt
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+      - name: Release 1 regression suite
+        run: python acceptance/run_release1_acceptance.py
+      - name: Release 2 verification
+        run: python scripts/verify_release2.py
