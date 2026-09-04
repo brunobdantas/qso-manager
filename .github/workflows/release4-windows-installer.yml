@@ -1,0 +1,95 @@
+name: Release 4 Windows Installer
+
+on:
+  push:
+    branches: [release4-windows-installer, main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: backend/requirements.txt
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend and build dependencies
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt
+          python -m pip install pyinstaller==6.11.1
+
+      - name: Install frontend dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build frontend
+        working-directory: frontend
+        run: npm run build
+
+      - name: Release 1 regression suite
+        run: python acceptance/run_release1_acceptance.py
+
+      - name: Release 2 verification
+        run: python scripts/verify_release2.py
+
+      - name: Release 3 integration tests
+        run: python -m pytest backend/tests/test_integrations.py -q
+
+      - name: Release 3 verification
+        run: python scripts/verify_release3.py
+
+      - name: Build standalone executable
+        run: python -m PyInstaller installer/qso_manager.spec --noconfirm --clean
+
+      - name: Self-test packaged executable
+        shell: pwsh
+        env:
+          QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-self-test
+        run: |
+          & ".\dist\PU2BRU-QSO-Manager.exe" --self-test
+          if ($LASTEXITCODE -ne 0) { throw "Packaged self-test failed with exit code $LASTEXITCODE" }
+          $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
+          if (-not (Test-Path $db)) { throw "Packaged database was not created in persistent data directory" }
+
+      - name: Ensure Inno Setup
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          & $iscc "installer\qso-manager.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (-not (Test-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup.exe")) {
+            throw "Installer output not found"
+          }
+
+      - name: Upload Windows installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: PU2BRU-QSO-Manager-Windows-Setup
+          path: dist-installer/PU2BRU-QSO-Manager-Setup.exe
+          if-no-files-found: error
+          retention-days: 30
