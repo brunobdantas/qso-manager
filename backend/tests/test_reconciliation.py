@@ -767,8 +767,8 @@ class TestReconciliationIdempotency:
             service.run_reconciliation()
             
             # Verificar fase 1
-            logical_qsos_1 = db.query(LogicalQSO).filter(LogicalQSO.is_active == True).all()
-            source_links_1 = db.query(QSOSourceLink).filter(QSOSourceLink.is_active == True).all()
+            logical_qsos_1 = db.query(LogicalQSO).all()
+            source_links_1 = db.query(QSOSourceLink).all()
             
             assert len(logical_qsos_1) == 1, f"Phase 1: Expected 1 LogicalQSO, got {len(logical_qsos_1)}"
             assert len(source_links_1) == 2, f"Phase 1: Expected 2 QSOSourceLinks, got {len(source_links_1)}"
@@ -787,8 +787,8 @@ class TestReconciliationIdempotency:
             service.run_reconciliation()
             
             # Verificar fase 2 - visão ativa deve ter 1 LogicalQSO com 3 links
-            logical_qsos_2 = db.query(LogicalQSO).filter(LogicalQSO.is_active == True).all()
-            source_links_2 = db.query(QSOSourceLink).filter(QSOSourceLink.is_active == True).all()
+            logical_qsos_2 = db.query(LogicalQSO).all()
+            source_links_2 = db.query(QSOSourceLink).all()
             
             assert len(logical_qsos_2) == 1, f"Phase 2: Expected 1 LogicalQSO, got {len(logical_qsos_2)}"
             assert len(source_links_2) == 3, f"Phase 2: Expected 3 QSOSourceLinks, got {len(source_links_2)}"
@@ -796,10 +796,13 @@ class TestReconciliationIdempotency:
             # Verificar que o único LogicalQSO contém QRZ, WRL e MSHV
             lq = logical_qsos_2[0]
             lq_source_links = db.query(QSOSourceLink).filter(
-                QSOSourceLink.logical_qso_id == lq.id,
-                QSOSourceLink.is_active == True
+                QSOSourceLink.logical_qso_id == lq.id
             ).all()
-            source_ids = [sl.source_id for sl in lq_source_links]
+            source_ids = []
+            for sl in lq_source_links:
+                nq = db.query(NormalizedQSO).filter(NormalizedQSO.id == sl.normalized_qso_id).first()
+                if nq:
+                    source_ids.append(nq.source_id)
             assert source_qrz.id in source_ids
             assert source_wrl.id in source_ids
             assert source_mshv.id in source_ids
@@ -833,6 +836,7 @@ class TestDivergenceIdempotency:
             db.commit()
             
             # Criar NormalizedQSOs com freq diferente (divergência)
+            # Usar TIME_ON idêntico para garantir apenas 1 divergência (FREQ)
             nq1 = NormalizedQSO(
                 raw_qso_id=1, source_id=source_qrz.id,
                 callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",
@@ -841,7 +845,7 @@ class TestDivergenceIdempotency:
             )
             nq2 = NormalizedQSO(
                 raw_qso_id=2, source_id=source_wrl.id,
-                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:10",
+                callsign="K1ABC", qso_date="2024-01-15", time_on="12:00:00",  # Mesmo TIME_ON
                 band="20M", freq_hz=14076500, mode="FT4",  # Freq diferente
                 operating_mode="FT4", mode_family="DIGITAL"
             )
