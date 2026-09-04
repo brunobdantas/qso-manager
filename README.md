@@ -1,42 +1,90 @@
 # PU2BRU QSO Manager
 
-Aplicação local para importar, reconciliar, revisar e auditar QSOs de múltiplas fontes com foco em evitar falsos "faltantes".
+Central local para baixar, comparar, reconciliar e gerenciar QSOs sem depender de abrir cada plataforma individualmente.
 
-## Windows 11 — instalação recomendada
+## Release 5 — Connected QSO Hub
 
-A forma recomendada é usar o instalador `PU2BRU-QSO-Manager-Setup.exe` gerado pelo workflow **Release 4 Windows Installer**.
+O fluxo principal conecta **QRZ, World Radio League (WRL), Club Log e eQSL** ao backend local. Cada fonte pode ser atualizada sob demanda e o QSO Manager preserva um snapshot local completo para pesquisa, comparação e evidência.
 
-1. Execute o instalador.
-2. Clique em **Instalar**.
-3. Abra **PU2BRU QSO Manager** pelo atalho criado no Menu Iniciar ou na área de trabalho.
+O **QRZ é a base preferencial**, mas não é tratado como verdade cega: um QSO ausente no QRZ e presente em outras fontes aparece como candidato de desatualização. Quando duas ou mais fontes independentes corroboram o mesmo QSO, a evidência é elevada, porém nenhuma correção é executada automaticamente.
 
-O instalador contém o runtime necessário. **Não é necessário instalar Python, Node.js ou npm** para usar a versão instalada.
+Principais recursos:
 
-O aplicativo inicia o servidor somente em `127.0.0.1:8000` e abre a interface no navegador padrão. A pequena janela nativa do QSO Manager permanece aberta enquanto o servidor local estiver ativo; use **Encerrar** para desligá-lo corretamente.
+- baixar snapshots completos de QRZ, WRL, Club Log e eQSL;
+- atualizar uma fonte ou todas as fontes conectadas;
+- comparar QRZ × cada fonte usando o mesmo núcleo tolerante do comparador ADIF;
+- separar faltantes, divergências de campos e duplicidades prováveis;
+- pesquisar QSOs nos quatro snapshots sem abrir os sites;
+- enviar QSO faltante do QRZ para uma fonte suportada;
+- adicionar ao QRZ um QSO corroborado por outra fonte, somente com confirmação explícita;
+- editar/excluir contatos WRL por ID estável;
+- excluir contato Club Log por identidade exata;
+- manter o comparador manual de dois arquivos ADIF para qualquer outra fonte.
 
-### Dados persistentes
+### Credenciais
 
-A aplicação instalada mantém banco, configurações, backups e arquivos de trabalho fora da pasta do programa, em:
+As credenciais são cadastradas pela própria tela **Fontes** e ficam apenas no backend local. O arquivo de conexões é criptografado com AES-GCM e a interface nunca devolve a chave/senha completa depois de salva.
+
+Dados persistentes:
 
 ```text
 %LOCALAPPDATA%\PU2BRU QSO Manager\
 ```
 
-O banco principal fica em:
+Snapshots das APIs:
+
+```text
+%LOCALAPPDATA%\PU2BRU QSO Manager\cloud_snapshots\
+```
+
+Para configurar as fontes:
+
+- **QRZ:** Logbook API Key de uma assinatura compatível com Logbook API.
+- **WRL:** Developer API Key criada em Integrations → Developer API; Logbook ID é opcional.
+- **Club Log:** e-mail, Application Password, indicativo do log e API Key para operações de escrita.
+- **eQSL:** indicativo/Username, senha e QTH Nickname opcional.
+
+## Segurança de escrita remota
+
+O sistema é conservador por desenho.
+
+**QRZ:** leitura completa e `INSERT` de QSO ausente são suportados. O sistema não usa `REPLACE`, não oferece edição arbitrária nem `DELETE`. Após `INSERT`, o LOGID retornado é consultado novamente por FETCH; falha de verificação aborta a operação. Isso preserva a regra de QRZ como base preferencial sem arriscar confirmações.
+
+**WRL:** leitura, inclusão, edição e exclusão usam a API REST e o ID remoto estável do contato. Alterações partem de snapshot local e exigem confirmação.
+
+**Club Log:** download completo, inclusão individual em tempo real e exclusão por identidade exata. O export do Club Log é tratado como representação minimalista e não como cópia byte a byte do log original.
+
+**eQSL:** leitura do OutBox e inclusão são suportadas. Edição e exclusão remotas não são oferecidas sem interface oficial documentada para essas operações.
+
+Antes de escrita/exclusão suportada, o snapshot local do destino é copiado para backup. Nenhuma divergência de campo sobrescreve automaticamente o QRZ.
+
+## Comparação e identidade
+
+O pareamento usa CALL, data, banda, horário e frequência com tolerância controlada. Modo não é uma chave rígida; equivalências como `MFSK/SUBMODE=FT4` × `FT4` são aceitas. Diferenças pequenas de segundos e frequência podem ser classificadas como toleradas. Duplicidades praticamente idênticas na mesma fonte não viram falsos QSOs faltantes.
+
+O comparador manual continua disponível para exports ADIF completos ou parciais. Upload manual permanece conservador: ausência em `PARTIAL_EXPORT` não prova que um QSO esteja faltando.
+
+## Windows 11 — instalação recomendada
+
+Use `PU2BRU-QSO-Manager-Setup.exe` gerado pelo workflow Windows. O instalador contém o runtime necessário; **não é necessário instalar Python, Node.js ou npm**.
+
+O aplicativo inicia somente em `127.0.0.1:8000` e abre a interface no navegador padrão. A janela nativa permanece aberta enquanto o servidor local está ativo; use **Encerrar** para desligá-lo corretamente.
+
+O banco principal permanece em:
 
 ```text
 %LOCALAPPDATA%\PU2BRU QSO Manager\data\qso_manager.db
 ```
 
-Isso evita perder QSOs ao atualizar ou reinstalar o aplicativo.
+Atualizar ou reinstalar o programa não remove os dados persistentes.
 
 ### Aviso do Windows
 
-O instalador ainda não possui assinatura digital de um certificado de code signing. Por isso, o Windows SmartScreen pode mostrar **Editor desconhecido**. Enquanto não houver assinatura, confirme que o arquivo veio do workflow oficial deste repositório antes de executá-lo.
+O instalador ainda não possui assinatura digital de code signing. O Windows SmartScreen pode mostrar **Editor desconhecido**. Confirme que o arquivo veio do workflow oficial deste repositório antes de executá-lo.
 
 ## Execução a partir do código-fonte — somente desenvolvimento
 
-Para desenvolver a aplicação, instale Python 3.12+ e Node.js 22+, abra PowerShell na pasta do projeto e execute:
+Para desenvolvimento, use Python 3.12+ e Node.js 22+:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\setup.ps1
@@ -46,60 +94,12 @@ Depois execute `start.bat`.
 
 ## Validação
 
-A versão Windows empacotada é construída e testada automaticamente no GitHub Actions. O pipeline:
+O pipeline Windows compila o React, executa os testes de backend e regressão, gera o executável standalone com PyInstaller, executa self-test já no binário empacotado e cria o Setup com Inno Setup. O self-test da Release 5 também valida que o Connected QSO Hub, criptografia local e rotas `/api/cloud/*` foram incluídos no executável.
 
-- compila o frontend React;
-- executa os testes do backend;
-- valida Releases 2 e 3;
-- gera o executável standalone com PyInstaller;
-- executa um self-test do executável já empacotado;
-- cria o instalador com Inno Setup;
-- publica `PU2BRU-QSO-Manager-Setup.exe` como artefato.
+O Release 1 continua protegido pela suíte imutável de acceptance em Linux.
 
-O Release 1 continua protegido pela suíte imutável executada no workflow Linux de acceptance.
-
-## Integrações
-
-### QRZ
-
-O sistema gera plano/dry-run por UUID e exige localizador exato `CALL + QSO_DATE + TIME_ON`. Ambiguidade ou ausência de `TIME_ON` aborta o plano.
-
-A escrita real no QRZ permanece **fail-closed**: o endpoint de apply retorna bloqueio e não executa rede. Um transporte real só deve ser liberado depois de backup, operação de um único registro e re-FETCH de confirmação.
-
-### WRL UDP
-
-O bridge WRL usa por padrão `127.0.0.1:2237` e aceita somente `localhost`/endereços loopback. Destinos LAN/Internet são rejeitados. `dry_run=true` não abre socket. Envio UDP real exige `WRL_UDP_ENABLED=true` explicitamente.
-
-As configurações da aplicação instalada podem ser colocadas em:
-
-```text
-%LOCALAPPDATA%\PU2BRU QSO Manager\.env
-```
-
-Exemplo:
-
-```env
-QRZ_API_KEY=
-QRZ_USERNAME=
-QRZ_DRY_RUN=true
-QRZ_WRITE_ENABLED=false
-
-WRL_UDP_HOST=127.0.0.1
-WRL_UDP_PORT=2237
-WRL_UDP_ENABLED=false
-```
-
-## Segurança operacional
-
-- Upload manual usa `PARTIAL_EXPORT` por padrão.
-- Ausência em export parcial não é tratada como prova de QSO faltante.
-- Atualizações manuais são aplicadas por UUID e persistidas contra a identidade estável do QSO.
-- Resoluções de divergência sobrevivem a novas reconciliações.
-- QRZ real não é habilitado implicitamente nem pela presença de credenciais.
-- WRL UDP real é restrito a loopback e exige enable explícito.
-
-## Arquitetura
+## Arquitetura legada/persistente
 
 `RawQSO -> NormalizedQSO -> QSOIdentity -> LogicalQSO -> QSOSourceLink`
 
-O `LogicalQSO` é uma visão materializada. Overrides e resoluções humanas pertencem à `QSOIdentity` persistente.
+O `LogicalQSO` é uma visão materializada. Overrides e resoluções humanas pertencem à `QSOIdentity` persistente. O Connected QSO Hub usa snapshots independentes para que a análise de nuvem não altere silenciosamente essa base local.

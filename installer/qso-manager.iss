@@ -1,5 +1,5 @@
 #define MyAppName "PU2BRU QSO Manager"
-#define MyAppVersion "1.0.0"
+#define MyAppVersion "5.0.0"
 #define MyAppPublisher "PU2BRU"
 #define MyAppExeName "PU2BRU-QSO-Manager.exe"
 
