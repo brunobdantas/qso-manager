@@ -11,55 +11,55 @@ from ..models.models import (
     Backup, LogicalQSO, NormalizedQSO, Source, AuditEvent, AuditOperation
 )
 from ..core.config import settings
+from ..core.runtime import backup_dir
 
 
 class BackupService:
     """Service for creating and managing backups."""
-    
-    BACKUP_DIR = "backups"
-    
+
+    BACKUP_DIR = str(backup_dir())
+
     def __init__(self, db: Session):
         self.db = db
         self._ensure_backup_dir()
-    
+
     def _ensure_backup_dir(self):
         """Ensure backup directory exists."""
         os.makedirs(self.BACKUP_DIR, exist_ok=True)
-    
+
     def create_backup(
-        self, 
+        self,
         backup_type: str = "full",
         description: Optional[str] = None,
         include_raw: bool = False,
     ) -> Dict[str, Any]:
         """
         Create a backup of QSO data.
-        
+
         Args:
             backup_type: 'full', 'adif', or 'json'
             description: Optional description for the backup
             include_raw: Include raw QSO data (larger file)
-        
+
         Returns:
             Dict with backup info including file_path
         """
         timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-        
+
         if backup_type == "adif":
             return self._create_adif_backup(timestamp, description)
         else:
             return self._create_json_backup(timestamp, description, include_raw)
-    
+
     def _create_json_backup(
         self, timestamp: str, description: Optional[str], include_raw: bool
     ) -> Dict[str, Any]:
         """Create JSON format backup."""
         filename = f"backup_{timestamp}.json"
         filepath = os.path.join(self.BACKUP_DIR, filename)
-        
-        # Load all logical QSOs
+
         logical_qsos = self.db.query(LogicalQSO).all()
-        
+
         backup_data = {
             "backup_type": "full",
             "created_at": datetime.utcnow().isoformat(),
@@ -68,7 +68,7 @@ class BackupService:
             "description": description,
             "logical_qsos": [],
         }
-        
+
         for lq in logical_qsos:
             qso_data = {
                 "uuid": lq.uuid,
@@ -99,17 +99,14 @@ class BackupService:
                 "status": lq.status,
             }
             backup_data["logical_qsos"].append(qso_data)
-        
-        # Write to file
+
         content = json.dumps(backup_data, indent=2)
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
-        
-        # Calculate checksum
+
         checksum = hashlib.sha256(content.encode()).hexdigest()
         file_size = len(content.encode())
-        
-        # Create backup record
+
         backup = Backup(
             backup_type="full",
             file_path=filepath,
@@ -118,15 +115,12 @@ class BackupService:
             checksum=checksum,
             description=description,
             created_at=datetime.utcnow(),
-            expires_at=datetime.utcnow() + timedelta(days=30),  # Auto-expire after 30 days
+            expires_at=datetime.utcnow() + timedelta(days=30),
         )
         self.db.add(backup)
-        
-        # Log audit
         self._log_audit(backup, "success")
-        
         self.db.commit()
-        
+
         return {
             "backup_id": backup.id,
             "backup_type": "full",
@@ -136,39 +130,34 @@ class BackupService:
             "checksum": checksum,
             "created_at": backup.created_at.isoformat(),
         }
-    
+
     def _create_adif_backup(
         self, timestamp: str, description: Optional[str]
     ) -> Dict[str, Any]:
         """Create ADIF format backup."""
         filename = f"backup_{timestamp}.adi"
         filepath = os.path.join(self.BACKUP_DIR, filename)
-        
-        # Load all logical QSOs
+
         logical_qsos = self.db.query(LogicalQSO).all()
-        
-        # Build ADIF content
+
         lines = [
             "<ADIF_VER:5>3.1.7",
             "<PROGRAMID:15>QSO Manager",
             "<EOH>",
         ]
-        
+
         for lq in logical_qsos:
             record = self._qso_to_adif_record(lq)
             lines.append(record)
-        
+
         content = "\r\n".join(lines)
-        
-        # Write to file
+
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
-        
-        # Calculate checksum
+
         checksum = hashlib.sha256(content.encode()).hexdigest()
         file_size = len(content.encode())
-        
-        # Create backup record
+
         backup = Backup(
             backup_type="adif",
             file_path=filepath,
@@ -180,12 +169,9 @@ class BackupService:
             expires_at=datetime.utcnow() + timedelta(days=30),
         )
         self.db.add(backup)
-        
-        # Log audit
         self._log_audit(backup, "success")
-        
         self.db.commit()
-        
+
         return {
             "backup_id": backup.id,
             "backup_type": "adif",
@@ -195,22 +181,22 @@ class BackupService:
             "checksum": checksum,
             "created_at": backup.created_at.isoformat(),
         }
-    
+
     def _qso_to_adif_record(self, lq: LogicalQSO) -> str:
         """Convert a LogicalQSO to ADIF record format."""
         fields = []
-        
+
         def add_field(name: str, value: Any):
             if value is not None and value != "":
                 str_value = str(value)
                 fields.append(f"<{name}:{len(str_value)}>{str_value}")
-        
+
         add_field("CALL", lq.callsign)
         add_field("QSO_DATE", lq.qso_date.replace("-", ""))
         add_field("TIME_ON", lq.time_on.replace(":", "") if lq.time_on else None)
         add_field("TIME_OFF", lq.time_off.replace(":", "") if lq.time_off else None)
         add_field("BAND", lq.band)
-        add_field("FREQ", lq.freq_hz / 1000000.0 if lq.freq_hz else None)  # Convert Hz back to MHz for ADIF
+        add_field("FREQ", lq.freq_hz / 1000000.0 if lq.freq_hz else None)
         add_field("MODE", lq.mode)
         add_field("SUBMODE", lq.submode)
         add_field("RST_SENT", lq.rst_sent)
@@ -225,9 +211,9 @@ class BackupService:
         add_field("CONT", lq.continent)
         add_field("IOTA", lq.iota)
         add_field("COMMENT", lq.comment)
-        
+
         return "".join(fields) + "<EOR>"
-    
+
     def list_backups(self) -> List[Dict[str, Any]]:
         """List all backups."""
         backups = self.db.query(Backup).order_by(Backup.created_at.desc()).all()
@@ -245,23 +231,21 @@ class BackupService:
             }
             for b in backups
         ]
-    
+
     def delete_backup(self, backup_id: int) -> bool:
         """Delete a backup file and record."""
         backup = self.db.query(Backup).filter(Backup.id == backup_id).first()
         if not backup:
             return False
-        
-        # Delete file if exists
+
         if os.path.exists(backup.file_path):
             os.remove(backup.file_path)
-        
-        # Delete record
+
         self.db.delete(backup)
         self.db.commit()
-        
+
         return True
-    
+
     def _log_audit(self, backup: Backup, result: str):
         """Log audit event for backup operation."""
         audit = AuditEvent(

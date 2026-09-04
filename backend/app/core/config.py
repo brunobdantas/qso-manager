@@ -1,12 +1,14 @@
 from pydantic_settings import BaseSettings
 from typing import Optional
 
+from .runtime import default_database_url, env_file_path
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # Database
-    database_url: str = "sqlite:///./data/qso_manager.db"
+    database_url: str = default_database_url()
 
     # QRZ.com
     qrz_api_key: Optional[str] = None
@@ -31,7 +33,7 @@ class Settings(BaseSettings):
     cors_origins: list = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
     class Config:
-        env_file = ".env"
+        env_file = env_file_path()
         case_sensitive = False
 
     @property

@@ -1,5 +1,4 @@
 """FastAPI application main entry point."""
-from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
+from .core.runtime import frontend_dist_dir
 from .db.database import engine, Base
 from .api import health, qsos, imports, reconciliation, backups, audit, integrations
 
@@ -15,7 +15,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="PU2BRU QSO Manager API",
     description="Backend API for QSO reconciliation and management",
-    version="3.0.0",
+    version="4.0.0",
 )
 
 app.add_middleware(
@@ -34,8 +34,7 @@ app.include_router(backups.router)
 app.include_router(audit.router)
 app.include_router(integrations.router)
 
-ROOT_DIR = Path(__file__).resolve().parents[2]
-FRONTEND_DIST = ROOT_DIR / "frontend" / "dist"
+FRONTEND_DIST = frontend_dist_dir()
 ASSETS_DIR = FRONTEND_DIST / "assets"
 
 if ASSETS_DIR.exists():
@@ -49,7 +48,7 @@ def root():
         return FileResponse(index)
     return {
         "name": "PU2BRU QSO Manager API",
-        "version": "3.0.0",
+        "version": "4.0.0",
         "docs": "/docs",
         "health": "/api/health",
         "frontend": "not-built",
@@ -63,7 +62,7 @@ def spa_fallback(full_path: str):
     index = FRONTEND_DIST / "index.html"
     if index.exists():
         return FileResponse(index)
-    raise HTTPException(status_code=404, detail="Frontend not built. Run setup.ps1 or npm run build.")
+    raise HTTPException(status_code=404, detail="Frontend not built.")
 
 
 if __name__ == "__main__":

@@ -50,34 +50,39 @@ def main() -> int:
             sys.path.insert(0, str(BACKEND))
 
         from fastapi.testclient import TestClient
+        from app.db.database import engine
         from app.main import app
 
-        client = TestClient(app)
-        health = client.get("/api/health")
-        if health.status_code != 200 or health.json().get("status") != "healthy":
-            fail(f"health endpoint failed: {health.status_code} {health.text}")
-        ok("API health")
+        try:
+            with TestClient(app) as client:
+                health = client.get("/api/health")
+                if health.status_code != 200 or health.json().get("status") != "healthy":
+                    fail(f"health endpoint failed: {health.status_code} {health.text}")
+                ok("API health")
 
-        for endpoint in ("/api/qsos", "/api/qsos/normalized", "/api/qsos/divergences", "/api/imports", "/api/audit", "/api/backups"):
-            response = client.get(endpoint)
-            if response.status_code != 200:
-                fail(f"{endpoint} returned {response.status_code}: {response.text}")
-        ok("core UI APIs")
+                for endpoint in ("/api/qsos", "/api/qsos/normalized", "/api/qsos/divergences", "/api/imports", "/api/audit", "/api/backups"):
+                    response = client.get(endpoint)
+                    if response.status_code != 200:
+                        fail(f"{endpoint} returned {response.status_code}: {response.text}")
+                ok("core UI APIs")
 
-        root = client.get("/")
-        if root.status_code != 200 or "text/html" not in root.headers.get("content-type", ""):
-            fail(f"FastAPI did not serve built frontend: {root.status_code}")
-        ok("FastAPI serves React build")
+                root = client.get("/")
+                if root.status_code != 200 or "text/html" not in root.headers.get("content-type", ""):
+                    fail(f"FastAPI did not serve built frontend: {root.status_code}")
+                ok("FastAPI serves React build")
 
-        spa = client.get("/qsos")
-        if spa.status_code != 200 or "text/html" not in spa.headers.get("content-type", ""):
-            fail("SPA fallback failed")
-        ok("SPA fallback")
+                spa = client.get("/qsos")
+                if spa.status_code != 200 or "text/html" not in spa.headers.get("content-type", ""):
+                    fail("SPA fallback failed")
+                ok("SPA fallback")
 
-        docs = client.get("/docs")
-        if docs.status_code != 200:
-            fail("OpenAPI docs unavailable")
-        ok("API docs")
+                docs = client.get("/docs")
+                if docs.status_code != 200:
+                    fail("OpenAPI docs unavailable")
+                ok("API docs")
+        finally:
+            app.dependency_overrides.clear()
+            engine.dispose()
 
     print("RESULT: PASS")
     return 0
