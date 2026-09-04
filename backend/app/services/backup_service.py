@@ -77,7 +77,7 @@ class BackupService:
                 "time_on": lq.time_on,
                 "time_off": lq.time_off,
                 "band": lq.band,
-                "freq": lq.freq,
+                "freq_hz": lq.freq_hz,
                 "mode": lq.mode,
                 "submode": lq.submode,
                 "operating_mode": lq.operating_mode,
@@ -210,7 +210,7 @@ class BackupService:
         add_field("TIME_ON", lq.time_on.replace(":", "") if lq.time_on else None)
         add_field("TIME_OFF", lq.time_off.replace(":", "") if lq.time_off else None)
         add_field("BAND", lq.band)
-        add_field("FREQ", lq.freq)
+        add_field("FREQ", lq.freq_hz / 1000000.0 if lq.freq_hz else None)  # Convert Hz back to MHz for ADIF
         add_field("MODE", lq.mode)
         add_field("SUBMODE", lq.submode)
         add_field("RST_SENT", lq.rst_sent)

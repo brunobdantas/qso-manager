@@ -195,7 +195,7 @@ class TestModeMatching:
             source_name="QRZ",
             time="12:00:00",
             band="40M",
-            freq=7200.0,
+            freq_hz=7200000,
         )
         
         qso2 = make_qso(
@@ -207,7 +207,7 @@ class TestModeMatching:
             source_name="WRL",
             time="12:00:10",
             band="40M",
-            freq=7200.0,
+            freq_hz=7200000,
         )
         
         result = engine.reconcile([qso1, qso2])
@@ -316,7 +316,40 @@ class TestDuplicateDetection:
         assert fp1 == fp2
     
     def test_real_duplicates_within_source(self):
-        """TESTE L: Two duplicate lines within same source -> DUPLICIDADE_REAL."""
+        """TESTE L: Two duplicate lines within same source -> DUPLICIDADE_REAL.
+        
+        This is tested at service level, but we verify fingerprint logic here.
+        """
+        from app.adif.parser import ADIFParser
+        
+        parser = ADIFParser()
+        
+        record1 = {
+            'CALL': 'PU2BRU',
+            'QSO_DATE': '2024-01-15',
+            'TIME_ON': '12:00:00',
+            'BAND': '20M',
+            'MODE': 'FT4',
+            'FREQ': 14076.0,
+        }
+        
+        record2 = {
+            'CALL': 'PU2BRU',
+            'QSO_DATE': '2024-01-15',
+            'TIME_ON': '12:00:00',
+            'BAND': '20M',
+            'MODE': 'FT4',
+            'FREQ': 14076.0,
+        }
+        
+        fp1 = parser.compute_fingerprint(record1)
+        fp2 = parser.compute_fingerprint(record2)
+        
+        # Same data = same fingerprint
+        assert fp1 == fp2
+    
+    def test_real_duplicates_within_source_engine(self):
+        """TESTE L: Two identical QSOs from same source -> REAL_DUPLICATE detected by engine."""
         engine = ReconciliationEngine()
         
         # Two identical QSOs from same source
@@ -328,3 +361,302 @@ class TestDuplicateDetection:
         # Should detect as real duplicate
         assert len(result.duplicates) >= 1
         assert result.duplicates[0]['type'].value == "REAL_DUPLICATE"
+
+
+class TestTimeOnAbsent:
+    """TESTE I: TIME_ON absent with multiple candidates -> REVISAO_MANUAL."""
+    
+    def test_time_on_absent_multiple_candidates_manual_review(self):
+        """TESTE I: TIME_ON ausente + múltiplos candidatos plausíveis => REVISAO_MANUAL.
+        
+        Scenario:
+        QRZ: K1ABC sem TIME_ON, 20M, FT8
+        WRL: K1ABC 12:00, 20M, FT8
+        MSHV: K1ABC 18:00, 20M, FT8
+        
+        Result: No auto-merge for the one without time. Mark as REVISAO_MANUAL.
+        """
+        engine = ReconciliationEngine()
+        
+        # QRZ without time
+        qso_qrz = make_qso(
+            id_=1, 
+            time="",  # No time
+            source_id=1, 
+            source_name="QRZ",
+            band="20M",
+            freq_hz=14076000,
+        )
+        qso_qrz.time_on = None
+        qso_qrz.has_time  # Recalculate property
+        
+        # WRL at 12:00
+        qso_wrl = make_qso(
+            id_=2, 
+            time="12:00:00", 
+            source_id=2, 
+            source_name="WRL",
+            band="20M",
+            freq_hz=14076000,
+        )
+        
+        # MSHV at 18:00
+        qso_mshv = make_qso(
+            id_=3, 
+            time="18:00:00", 
+            source_id=3, 
+            source_name="MSHV",
+            band="20M",
+            freq_hz=14076000,
+        )
+        
+        result = engine.reconcile([qso_qrz, qso_wrl, qso_mshv])
+        
+        # Should have matches but the one without time should not auto-merge
+        # There should be at least 2 logical QSOs since 12:00 and 18:00 are different
+        assert len(result.logical_qsos) >= 2
+        
+        # Check that matches involving the no-time QSO are marked for review
+        for match in result.matches:
+            if match.qso1_id == 1 or match.qso2_id == 1:
+                # The QSO without time should not auto-merge when there are multiple candidates
+                assert match.match_status in (
+                    MatchStatus.REVISAO_MANUAL, 
+                    MatchStatus.MANUAL_REVIEW,
+                    MatchStatus.POSSIBLE_MATCH
+                ), f"Expected manual review for match involving no-time QSO, got {match.match_status}"
+
+
+class TestUpdateCorrectQSO:
+    """TESTE M: Updating one of two QSOs with same CALL/date affects only correct one."""
+    
+    def test_update_affects_only_correct_qso(self):
+        """TESTE M: dois QSOs do mesmo CALL/data; alterar um deve atingir SOMENTE o QSO correto.
+        
+        Scenario:
+        K1ABC 2026-09-03 12:00
+        K1ABC 2026-09-03 18:00
+        
+        Update operation on first should only affect the 12:00 QSO.
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.database import Base, get_db
+        from app.models.models import LogicalQSO, Source
+        from app.services.qso_update_service import QSOUpdateService
+        from datetime import datetime
+        
+        # Create test database
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Create source
+            source = Source(name="TEST", description="Test source")
+            db.add(source)
+            db.commit()
+            
+            # Create two logical QSOs same call/date different times
+            lq1 = LogicalQSO(
+                uuid="test-uuid-1",
+                callsign="K1ABC",
+                qso_date="2026-09-03",
+                time_on="12:00:00",
+                band="20M",
+                freq_hz=14076000,
+                mode="FT4",
+            )
+            lq2 = LogicalQSO(
+                uuid="test-uuid-2",
+                callsign="K1ABC",
+                qso_date="2026-09-03",
+                time_on="18:00:00",
+                band="20M",
+                freq_hz=14076000,
+                mode="FT4",
+            )
+            db.add(lq1)
+            db.add(lq2)
+            db.commit()
+            
+            # Now update ONLY the first one (12:00)
+            update_data = {
+                "grid": "GG55AA",
+                "comment": "Updated QSO at 12:00",
+            }
+            
+            service = QSOUpdateService(db)
+            updated_qso = service.update_logical_qso(lq1.id, update_data, reason="Test update")
+            
+            # Verify only the first QSO was updated
+            db.refresh(lq1)
+            db.refresh(lq2)
+            
+            assert lq1.grid == "GG55AA"
+            assert lq1.comment == "Updated QSO at 12:00"
+            
+            # Second QSO should remain unchanged
+            assert lq2.grid is None or lq2.grid != "GG55AA"
+            assert lq2.comment is None or lq2.comment != "Updated QSO at 12:00"
+            
+        finally:
+            db.close()
+
+
+class TestSafeCountyUpdate:
+    """TESTE N: REPLACE CNTY preserves all other fields."""
+    
+    def test_county_update_preserves_other_fields(self):
+        """TESTE N: REPLACE de CNTY deve preservar todos os demais campos.
+        
+        Build a safe update where:
+        - CNTY changes from empty to "Campinas"
+        - All other fields remain identical
+        """
+        from sqlalchemy import create_engine
+        from sqlalchemy.orm import sessionmaker
+        from app.db.database import Base
+        from app.models.models import LogicalQSO, Source
+        from app.services.safe_update_service import SafeUpdateService
+        from datetime import datetime
+        
+        # Create test database
+        engine = create_engine("sqlite:///:memory:")
+        Base.metadata.create_all(engine)
+        SessionLocal = sessionmaker(bind=engine)
+        db = SessionLocal()
+        
+        try:
+            # Create source
+            source = Source(name="TEST", description="Test source")
+            db.add(source)
+            db.commit()
+            
+            # Create a logical QSO with full data
+            original_qso = LogicalQSO(
+                uuid="test-uuid-cnty",
+                callsign="PU2BRU",
+                qso_date="2024-01-15",
+                time_on="12:00:00",
+                time_off="12:30:00",
+                band="20M",
+                freq_hz=14076000,
+                mode="FT4",
+                submode=None,
+                operating_mode="FT4",
+                mode_family="DIGITAL",
+                rst_sent="599",
+                rst_rcvd="599",
+                grid="GG55",
+                dxcc=108,
+                country="Brazil",
+                state="SP",
+                county="",  # Empty initially
+                cqz=11,
+                ituz=15,
+                continent="SA",
+                iota=None,
+                comment="Original comment",
+            )
+            db.add(original_qso)
+            db.commit()
+            db.refresh(original_qso)
+            
+            # Build safe update for CNTY only
+            service = SafeUpdateService(db)
+            
+            update_spec = {
+                "county": "Campinas",
+            }
+            
+            # Use the safe update service which preserves other fields
+            result = service.build_safe_update(
+                original_qso.id,
+                update_spec,
+                reason="Adding county information",
+            )
+            
+            # Verify the update preserves all other fields
+            assert result['preserved_fields'] is not None
+            
+            # Check that critical fields are preserved
+            preserved = result['before']
+            assert preserved['callsign'] == "PU2BRU"
+            assert preserved['qso_date'] == "2024-01-15"
+            assert preserved['time_on'] == "12:00:00"
+            assert preserved['band'] == "20M"
+            assert preserved['freq_hz'] == 14076000
+            assert preserved['mode'] == "FT4"
+            assert preserved['grid'] == "GG55"
+            assert preserved['dxcc'] == 108
+            assert preserved['comment'] == "Original comment"
+            
+            # County should change
+            assert result['after']['county'] == "Campinas"
+            
+            # All other fields should remain the same
+            assert result['after']['callsign'] == preserved['callsign']
+            assert result['after']['qso_date'] == preserved['qso_date']
+            assert result['after']['time_on'] == preserved['time_on']
+            assert result['after']['band'] == preserved['band']
+            assert result['after']['freq_hz'] == preserved['freq_hz']
+            assert result['after']['mode'] == preserved['mode']
+            assert result['after']['grid'] == preserved['grid']
+            assert result['after']['dxcc'] == preserved['dxcc']
+            assert result['after']['comment'] == preserved['comment']
+            
+        finally:
+            db.close()
+
+
+class TestMultiSourceClustering:
+    """Test multi-source clustering - QRZ+WRL+MSHV should produce exactly 1 LogicalQSO."""
+    
+    def test_three_sources_one_logical_qso(self):
+        """Multi-source test: QRZ 12:00:00, WRL 12:00:10, MSHV 12:00:05 => 1 LogicalQSO with 3 source_links."""
+        engine = ReconciliationEngine()
+        
+        qso_qrz = make_qso(
+            id_=1, 
+            time="12:00:00", 
+            source_id=1, 
+            source_name="QRZ",
+            band="20M",
+            freq_hz=14076000,
+        )
+        qso_wrl = make_qso(
+            id_=2, 
+            time="12:00:10", 
+            source_id=2, 
+            source_name="WRL",
+            band="20M",
+            freq_hz=14076000,
+        )
+        qso_mshv = make_qso(
+            id_=3, 
+            time="12:00:05", 
+            source_id=3, 
+            source_name="MSHV",
+            band="20M",
+            freq_hz=14076000,
+        )
+        
+        result = engine.reconcile([qso_qrz, qso_wrl, qso_mshv])
+        
+        # Should produce EXACTLY 1 LogicalQSO
+        assert len(result.logical_qsos) == 1, f"Expected 1 LogicalQSO, got {len(result.logical_qsos)}"
+        
+        # Each NormalizedQSO should appear exactly once
+        logical_qso = result.logical_qsos[0]
+        source_links = logical_qso.get('source_links', [])
+        
+        # Should have 3 source links
+        assert len(source_links) == 3, f"Expected 3 source_links, got {len(source_links)}"
+        
+        # Verify all three sources are present
+        source_names = [link.get('source_name') for link in source_links]
+        assert "QRZ" in source_names
+        assert "WRL" in source_names
+        assert "MSHV" in source_names

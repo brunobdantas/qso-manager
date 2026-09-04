@@ -110,10 +110,11 @@ class ReconciliationEngine:
     TIME_EXACT_MATCH = 60       # Auto-match allowed
     TIME_REVIEW_THRESHOLD = 300  # 5 minutes - beyond this, no auto-match
     
-    # Frequency tolerance (kHz)
-    FREQ_TOLERANCE_DIGITAL = 3.0  # kHz for digital modes
-    FREQ_TOLERANCE_PHONE = 5.0    # kHz for phone modes
-    FREQ_TOLERANCE_CW = 2.0       # kHz for CW
+    # Frequency tolerance (Hz) - 1000 Hz default
+    FREQ_TOLERANCE_HZ = 1000  # Default tolerance in Hz
+    FREQ_TOLERANCE_DIGITAL_HZ = 1000  # Hz for digital modes
+    FREQ_TOLERANCE_PHONE_HZ = 3000    # Hz for phone modes
+    FREQ_TOLERANCE_CW_HZ = 500        # Hz for CW
     
     def __init__(self):
         self.matches: List[MatchCandidate] = []
@@ -327,17 +328,17 @@ class ReconciliationEngine:
                 score += 15
                 reasoning.append(f"Operating mode matches: {qso1.operating_mode}")
         
-        # Frequency comparison (with tolerance)
+        # Frequency comparison (with tolerance in Hz)
         if qso1.freq_hz and qso2.freq_hz:
-            freq_diff_khz = abs(qso1.freq_hz - qso2.freq_hz) / 1000  # Hz to kHz
-            tolerance = self._get_freq_tolerance(qso1.mode_family)
+            freq_diff_hz = abs(qso1.freq_hz - qso2.freq_hz)  # Difference in Hz
+            tolerance_hz = self._get_freq_tolerance(qso1.mode_family)
             
-            if freq_diff_khz <= tolerance:
+            if freq_diff_hz <= tolerance_hz:
                 score += 15
-                reasoning.append(f"Frequency within tolerance: {freq_diff_khz:.2f} kHz")
+                reasoning.append(f"Frequency within tolerance: {freq_diff_hz} Hz")
             else:
                 score -= 5
-                reasoning.append(f"Frequency difference: {freq_diff_khz:.2f} kHz")
+                reasoning.append(f"Frequency difference: {freq_diff_hz} Hz")
         
         # Grid match (strong evidence if present)
         if qso1.grid and qso2.grid:
@@ -412,15 +413,15 @@ class ReconciliationEngine:
             blocking_reasons=blocking_reasons
         )
     
-    def _get_freq_tolerance(self, mode_family: Optional[str]) -> float:
-        """Get frequency tolerance based on mode family."""
+    def _get_freq_tolerance(self, mode_family: Optional[str]) -> int:
+        """Get frequency tolerance in Hz based on mode family."""
         if mode_family == 'DIGITAL':
-            return self.FREQ_TOLERANCE_DIGITAL
+            return self.FREQ_TOLERANCE_DIGITAL_HZ
         elif mode_family == 'PHONE' or mode_family == 'SSB':
-            return self.FREQ_TOLERANCE_PHONE
+            return self.FREQ_TOLERANCE_PHONE_HZ
         elif mode_family == 'CW':
-            return self.FREQ_TOLERANCE_CW
-        return self.FREQ_TOLERANCE_DIGITAL
+            return self.FREQ_TOLERANCE_CW_HZ
+        return self.FREQ_TOLERANCE_HZ
     
     def _create_low_level_candidate(
         self, 
