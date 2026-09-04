@@ -453,8 +453,8 @@ class TestUpdateCorrectQSO:
         db = SessionLocal()
         
         try:
-            # Create source
-            source = Source(name="TEST", description="Test source")
+            # Create source - use correct fields (type, not description)
+            source = Source(name="TEST", type="TEST")
             db.add(source)
             db.commit()
             
@@ -481,14 +481,15 @@ class TestUpdateCorrectQSO:
             db.add(lq2)
             db.commit()
             
-            # Now update ONLY the first one (12:00)
+            # Now update ONLY the first one (12:00) using its exact ID
             update_data = {
                 "grid": "GG55AA",
                 "comment": "Updated QSO at 12:00",
             }
             
             service = QSOUpdateService(db)
-            updated_qso = service.update_logical_qso(lq1.id, update_data, reason="Test update")
+            # Use the internal id (not uuid) for update
+            updated_qso = service.update_qso(lq1.id, update_data)
             
             # Verify only the first QSO was updated
             db.refresh(lq1)
@@ -529,8 +530,8 @@ class TestSafeCountyUpdate:
         db = SessionLocal()
         
         try:
-            # Create source
-            source = Source(name="TEST", description="Test source")
+            # Create source - use correct fields (type, not description)
+            source = Source(name="TEST", type="TEST")
             db.add(source)
             db.commit()
             

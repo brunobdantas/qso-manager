@@ -1,8 +1,8 @@
 """API Routes for import operations."""
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Body
 from sqlalchemy.orm import Session
-from typing import List
+from typing import List, Optional
 
 from ..db.database import get_db
 from ..schemas.schemas import ADIFImportResponse, CoverageType
@@ -14,47 +14,30 @@ router = APIRouter(prefix="/api/imports", tags=["imports"])
 
 @router.post("/adif", response_model=ADIFImportResponse)
 async def import_adif(
-    file: UploadFile = File(...),
-    source_name: str = Form(...),
-    source_type: str = Form(default="LOGBOOK"),
-    coverage_type: str = Form(default="FULL_EXPORT"),
-    reliability_score: float = Form(default=0.5),
+    content: str = Body(..., embed=True),
+    source_name: str = Body(..., embed=True),
+    filename: Optional[str] = Body(default="inline.adif", embed=True),
+    source_type: str = Body(default="LOGBOOK", embed=True),
+    coverage_type: str = Body(default="FULL_EXPORT", embed=True),
+    reliability_score: float = Body(default=0.5, embed=True),
     db: Session = Depends(get_db),
 ):
     """
-    Import an ADIF file.
+    Import an ADIF file content.
     
-    - **file**: ADIF file to import
+    Expects JSON body with:
+    - **content**: ADIF file content as string
     - **source_name**: Name of the source (e.g., "QRZ", "WRL", "MSHV")
+    - **filename**: Optional filename (default: "inline.adif")
     - **source_type**: Type of source (LOGBOOK, SOFTWARE, etc.)
     - **coverage_type**: Type of coverage (FULL_EXPORT, PARTIAL_EXPORT, etc.)
     - **reliability_score**: Reliability score 0.0-1.0
     """
-    # Validate file type
-    if not file.filename.lower().endswith(('.adi', '.adif')):
-        raise HTTPException(
-            status_code=400, 
-            detail="File must be an ADIF file (.adi or .adif)"
-        )
-    
-    # Read file content
-    content = await file.read()
-    try:
-        content_str = content.decode('utf-8')
-    except UnicodeDecodeError:
-        try:
-            content_str = content.decode('latin-1')
-        except:
-            raise HTTPException(
-                status_code=400,
-                detail="Unable to decode file. Please ensure it's a valid text file."
-            )
-    
     # Import using service
     service = ADIFImportService(db)
     result = service.import_adif(
-        content=content_str,
-        filename=file.filename,
+        content=content,
+        filename=filename,
         source_name=source_name,
         source_type=source_type,
         coverage_type=CoverageType(coverage_type),

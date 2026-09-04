@@ -48,24 +48,6 @@ def get_qsos(
     return qsos
 
 
-@router.get("/{qso_id}", response_model=LogicalQSODetail)
-def get_qso(qso_id: int, db: Session = Depends(get_db)):
-    """Get a specific logical QSO by ID."""
-    qso = db.query(LogicalQSO).filter(LogicalQSO.id == qso_id).first()
-    if not qso:
-        raise HTTPException(status_code=404, detail="QSO not found")
-    return qso
-
-
-@router.get("/uuid/{uuid}", response_model=LogicalQSODetail)
-def get_qso_by_uuid(uuid: str, db: Session = Depends(get_db)):
-    """Get a specific logical QSO by UUID."""
-    qso = db.query(LogicalQSO).filter(LogicalQSO.uuid == uuid).first()
-    if not qso:
-        raise HTTPException(status_code=404, detail="QSO not found")
-    return qso
-
-
 @router.get("/divergences", response_model=List[dict])
 def get_divergences(
     status: Optional[str] = None,
@@ -95,3 +77,30 @@ def get_normalized_qsos(
     
     qsos = query.offset(skip).limit(limit).all()
     return qsos
+
+
+@router.get("/id/{qso_id}", response_model=LogicalQSODetail)
+def get_qso_by_internal_id(qso_id: int, db: Session = Depends(get_db)):
+    """Get a specific logical QSO by internal ID."""
+    qso = db.query(LogicalQSO).filter(LogicalQSO.id == qso_id).first()
+    if not qso:
+        raise HTTPException(status_code=404, detail="QSO not found")
+    return qso
+
+
+@router.get("/{qso_id}", response_model=LogicalQSODetail)
+def get_qso(qso_id: int, db: Session = Depends(get_db)):
+    """Get a specific logical QSO by ID."""
+    qso = db.query(LogicalQSO).filter(LogicalQSO.id == qso_id).first()
+    if not qso:
+        raise HTTPException(status_code=404, detail="QSO not found")
+    return qso
+
+
+@router.get("/uuid/{uuid}", response_model=LogicalQSODetail)
+def get_qso_by_uuid(uuid: str, db: Session = Depends(get_db)):
+    """Get a specific logical QSO by UUID."""
+    qso = db.query(LogicalQSO).filter(LogicalQSO.uuid == uuid).first()
+    if not qso:
+        raise HTTPException(status_code=404, detail="QSO not found")
+    return qso
