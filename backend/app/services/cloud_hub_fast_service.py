@@ -13,3 +13,27 @@ class CloudHubService(BaseCloudHubService):
     def __init__(self, credentials: Optional[CredentialStore] = None, snapshots: Optional[CloudSnapshotStore] = None) -> None:
         super().__init__(credentials=credentials, snapshots=snapshots)
         self.comparator = FastADIFComparisonService()
+
+    def analysis(self):
+        result = super().analysis()
+        if not result.get("ready"):
+            return result
+        existing = result.get("probable_duplicates") or []
+        seen = {
+            (d.get("source"), d.get("call"), d.get("date"), d.get("band"), tuple(r.get("time") for r in d.get("records") or []))
+            for d in existing
+        }
+        for comparison in (result.get("pairwise") or {}).values():
+            for duplicate in comparison.get("probable_duplicates", []):
+                if duplicate.get("source") != "QRZ":
+                    continue
+                key = (
+                    duplicate.get("source"), duplicate.get("call"), duplicate.get("date"), duplicate.get("band"),
+                    tuple(r.get("time") for r in duplicate.get("records") or []),
+                )
+                if key not in seen:
+                    existing.append(duplicate)
+                    seen.add(key)
+        result["probable_duplicates"] = existing
+        result["summary"]["probable_duplicates"] = len(existing)
+        return result
