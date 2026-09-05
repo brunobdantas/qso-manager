@@ -91,7 +91,9 @@ def _run_self_test() -> int:
         # crypto/http adapters and persistent snapshot modules are bundled.
         from app.services.cloud_hub_fast_service import CloudHubService
         cloud_status = CloudHubService().status()
-        if cloud_status.get("truth_source") != "QRZ" or len(cloud_status.get("providers", [])) != 4:
+        provider_names = {item.get("provider") for item in cloud_status.get("providers", [])}
+        required_providers = {"QRZ", "WRL", "CLUBLOG", "EQSL", "HRD"}
+        if cloud_status.get("truth_source") != "QRZ" or not required_providers.issubset(provider_names):
             return 16
 
         # Exercise the same Uvicorn configuration used by the GUI startup.

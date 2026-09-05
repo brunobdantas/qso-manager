@@ -34,6 +34,11 @@ class RemoteDeleteRequest(BaseModel):
     confirm: bool = False
 
 
+class LocalADIFRequest(BaseModel):
+    content: str
+    filename: str = "ham-radio-deluxe.adi"
+
+
 def _run(fn):
     try:
         return fn()
@@ -64,6 +69,12 @@ def disconnect(provider: str):
 def clear_local_snapshot(provider: str):
     """Delete only the active local snapshot. Remote data and credentials stay untouched."""
     return _run(lambda: CloudHubService().clear_snapshot(provider))
+
+
+@router.put("/snapshots/{provider}/adif", response_model=dict)
+def import_local_adif_snapshot(provider: str, request: LocalADIFRequest):
+    """Import or replace a persistent local ADIF source snapshot."""
+    return _run(lambda: CloudHubService().import_adif_snapshot(provider, request.content, request.filename))
 
 
 @router.post("/connections/{provider}/test", response_model=dict)
