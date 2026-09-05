@@ -49,6 +49,29 @@ class CloudSnapshotStore:
     def all_summaries(self, providers: Iterable[str]) -> List[Dict[str, Any]]:
         return [self.summary(provider) for provider in providers]
 
+    def clear(self, provider: str) -> Dict[str, Any]:
+        """Remove only the active local snapshot for a provider.
+
+        Credentials, remote data and historical backups are intentionally left
+        untouched. This makes the operation reversible from a UX perspective:
+        the user can simply synchronize the provider again.
+        """
+        provider = provider.upper()
+        before = self.summary(provider)
+        path = self._path(provider)
+        existed = path.exists()
+        if existed:
+            path.unlink()
+        return {
+            "provider": provider,
+            "cleared": existed,
+            "records_removed": before.get("records", 0),
+            "remote_affected": False,
+            "credentials_affected": False,
+            "backups_affected": False,
+            "snapshot": self.summary(provider),
+        }
+
     def backup(self, provider: str) -> Path | None:
         path = self._path(provider)
         if not path.exists():
