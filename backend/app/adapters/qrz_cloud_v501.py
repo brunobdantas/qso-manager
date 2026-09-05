@@ -1,9 +1,10 @@
 """Production QRZ Logbook adapter.
 
-Release 5.0.4 uses a deterministic LOGID-manifest download strategy for QRZ.
-The QRZ API supports fetching the complete list of LOGIDs with TYPE:LOGIDS and
-then fetching exact records by LOGIDS.  This avoids depending on AFTERLOGID
-paging behaviour while still using only documented API operations.
+Release 5.0.5 deliberately goes back to the simplest forms documented by QRZ.
+The primary full-sync request is ACTION=FETCH with OPTION=ALL only; ADIF and
+ALL statuses are already the documented defaults. If that transaction cannot
+be completed, the adapter falls back to QRZ's exact paging example:
+MAX:250,AFTERLOGID:n. No TYPE:LOGIDS manifest or compound selector is required.
 """
 from __future__ import annotations
 
@@ -12,20 +13,21 @@ import re
 from typing import Any, Dict, Iterable, List, Tuple
 from urllib.parse import parse_qs, unquote_plus
 
+import httpx
+
 from .cloud_logs import ADIFParser, CloudProviderError, QRZCloudAdapter
 
 
 class QRZCloudAdapterV501(QRZCloudAdapter):
     """QRZ adapter with STATUS validation and verified full-log download."""
 
-    BATCH_SIZE = 200
+    PAGE_SIZE = 250
 
     @staticmethod
     def _access_help(action: str, original: str) -> str:
         return (
-            f"QRZ recusou a operação {action.upper()}. "
-            "A chave está configurada, mas o QRZ não aceitou esta operação. "
-            "Confirme a Logbook API Access Key do logbook e tente novamente. "
+            f"QRZ recusou a operação {action.upper()} por autenticação/permissão. "
+            "A Logbook API Key deve ser a chave do logbook correto. "
             f"Resposta do QRZ: {original}."
         )
 
@@ -50,6 +52,8 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             for key, values in parse_qs(raw, keep_blank_values=True).items()
         }
 
+        # Some QRZ responses have historically been inconsistent around the
+        # ADIF value encoding. Recover the raw ADIF value if parse_qs did not.
         if (not parsed.get("ADIF")) and re.search(r"(?:^|&)ADIF=", raw, flags=re.I):
             match = re.search(
                 r"(?:^|&)ADIF=(.*?)(?=&(?:RESULT|REASON|LOGIDS?|COUNT|DATA)=|$)",
@@ -63,6 +67,13 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             parsed["ADIF"] = cls._decode_adif(parsed["ADIF"])
         return parsed
 
+    @staticmethod
+    def _safe_option_label(option: str) -> str:
+        option = str(option or "")
+        if option.startswith("LOGIDS:"):
+            return "LOGIDS:<lista>"
+        return option[:180]
+
     def _post(self, action: str, **fields: Any) -> Dict[str, str]:
         raw_key = str(self.credentials.get("api_key") or "")
         key = "".join(raw_key.split())
@@ -71,25 +82,42 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         if key != raw_key:
             self.credentials = {**self.credentials, "api_key": key}
 
-        form = {"KEY": key, "ACTION": action.upper()}
+        action = action.upper()
+        form = {"KEY": key, "ACTION": action}
         form.update({k: str(v) for k, v in fields.items() if v is not None})
-        response = self.client.post(
-            self.endpoint,
-            data=form,
-            headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.4 (PU2BRU)"},
-        )
-        response.raise_for_status()
+        try:
+            response = self.client.post(
+                self.endpoint,
+                data=form,
+                headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.5 (PU2BRU)"},
+                timeout=180.0 if action == "FETCH" else 60.0,
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            option = self._safe_option_label(form.get("OPTION", ""))
+            raise CloudProviderError(
+                f"QRZ {action} excedeu o tempo de resposta"
+                + (f" (OPTION={option})" if option else "")
+            ) from exc
+        except httpx.HTTPError as exc:
+            raise CloudProviderError(f"Falha HTTP ao acessar QRZ {action}: {exc}") from exc
+
         parsed = self._parse_response(response.text)
         result = parsed.get("RESULT", "").upper()
         if result in {"FAIL", "AUTH"}:
             reason = parsed.get("REASON") or f"QRZ returned {result}"
             lowered = reason.lower()
-            if reason in {"QRZ returned FAIL", "QRZ returned AUTH"} or any(
+            if result == "AUTH" or any(
                 token in lowered
                 for token in ("invalid key", "access key", "unauthorized", "subscription", "privilege")
             ):
                 raise CloudProviderError(self._access_help(action, reason))
-            raise CloudProviderError(reason)
+            option = self._safe_option_label(form.get("OPTION", ""))
+            raise CloudProviderError(
+                f"QRZ {action} falhou"
+                + (f" (OPTION={option})" if option else "")
+                + f": {reason}"
+            )
         return parsed
 
     @staticmethod
@@ -116,9 +144,11 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         for row in page:
             raw = row.get("APP_QRZLOG_LOGID") or row.get("QSO_ID")
             try:
-                ids.append(int(str(raw)))
+                value = int(str(raw))
             except (TypeError, ValueError):
-                pass
+                continue
+            if value not in ids:
+                ids.append(value)
         for token in str(data.get("LOGIDS") or "").split(","):
             try:
                 value = int(token.strip())
@@ -140,93 +170,120 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         adif = self._decode_adif(data.get("ADIF", ""))
         return ADIFParser().parse(adif)
 
-    def _fetch_manifest(self) -> Tuple[List[int], Dict[str, str]]:
-        # QRZ documents ALL together with TYPE and STATUS. Without MAX the
-        # selection is unlimited, so this yields a stable manifest of the book.
-        option = "ALL,TYPE:LOGIDS,STATUS:ALL"
-        data = self._post("FETCH", OPTION=option)
-        ids = sorted(set(self._logids(data)))
-        count = self._response_count(data)
+    def _download_direct(self, expected: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        # This is the canonical full-book request in the QRZ documentation.
+        # TYPE defaults to ADIF and STATUS defaults to ALL, so do not add any
+        # extra selector that a particular QRZ deployment might reject.
+        data = self._post("FETCH", OPTION="ALL")
+        records, errors = self._parse_page(data)
+        if errors and not records:
+            raise CloudProviderError("QRZ retornou ADIF inválido no FETCH ALL: " + "; ".join(errors[:3]))
 
-        if count > 0 and len(ids) != count:
+        response_count = self._response_count(data)
+        if response_count and len(records) != response_count:
             raise CloudProviderError(
-                f"QRZ informou {count} LOGIDs, mas entregou {len(ids)} identificadores. "
-                "O snapshot anterior foi preservado."
+                f"FETCH ALL incompleto: QRZ informou COUNT={response_count}, mas foram lidos {len(records)} QSOs."
             )
-        return ids, data
-
-    def _fetch_exact_batch(self, ids: List[int]) -> List[Dict[str, Any]]:
-        option = "LOGIDS:" + "+".join(str(value) for value in ids) + ",TYPE:ADIF,STATUS:ALL"
-        data = self._post("FETCH", OPTION=option)
-        page, errors = self._parse_page(data)
-        if errors and not page:
-            raise CloudProviderError("QRZ retornou ADIF inválido: " + "; ".join(errors[:3]))
-        if len(page) != len(ids):
+        if expected and len(records) != expected:
             raise CloudProviderError(
-                f"QRZ deveria retornar {len(ids)} QSOs para um lote de LOGIDs, mas retornou {len(page)}. "
-                "O snapshot anterior foi preservado."
+                f"FETCH ALL retornou {len(records)} QSOs, mas STATUS informa {expected}."
             )
-        return page
-
-    def _download_from_manifest(self, expected: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
-        ids, manifest_data = self._fetch_manifest()
-        manifest_count = self._response_count(manifest_data) or len(ids)
-
-        if expected > 0 and not ids:
-            raise CloudProviderError(
-                f"QRZ informa {expected} QSOs no logbook, mas o manifesto retornou 0 LOGIDs. "
-                "O snapshot anterior foi preservado."
-            )
-        if expected and manifest_count != expected:
-            raise CloudProviderError(
-                f"QRZ STATUS informa {expected} QSOs, mas o manifesto contém {manifest_count}. "
-                "A base pode ter mudado durante a sincronização; o snapshot anterior foi preservado."
-            )
-
-        records: List[Dict[str, Any]] = []
-        batches = 0
-        for offset in range(0, len(ids), self.BATCH_SIZE):
-            batch = ids[offset:offset + self.BATCH_SIZE]
-            records.extend(self._fetch_exact_batch(batch))
-            batches += 1
-
-        if len(records) != len(ids):
-            raise CloudProviderError(
-                f"Download QRZ incompleto: manifesto com {len(ids)} QSOs e {len(records)} registros baixados. "
-                "O snapshot anterior foi preservado."
-            )
-
         return records, {
             "coverage": "API_FULL_SYNC",
-            "strategy": "LOGID_MANIFEST_BATCHED",
-            "manifest_count": len(ids),
-            "batches": batches,
-            "batch_size": self.BATCH_SIZE,
+            "strategy": "DIRECT_ALL",
+            "remote_status_count": expected,
+            "response_count": response_count,
+        }
+
+    def _download_paged(self, expected: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        records: List[Dict[str, Any]] = []
+        after_logid = 0
+        pages = 0
+        seen_pages = set()
+
+        while True:
+            option = f"MAX:{self.PAGE_SIZE},AFTERLOGID:{after_logid}"
+            data = self._post("FETCH", OPTION=option)
+            page, errors = self._parse_page(data)
+            if errors and not page:
+                raise CloudProviderError(
+                    f"QRZ retornou ADIF inválido na página {pages + 1}: " + "; ".join(errors[:3])
+                )
+
+            ids = self._logids(data, page)
+            signature = (tuple(ids[:3]), tuple(ids[-3:]), len(page))
+            if signature in seen_pages and page:
+                raise CloudProviderError(
+                    f"QRZ repetiu a mesma página na paginação (AFTERLOGID={after_logid})."
+                )
+            seen_pages.add(signature)
+
+            if not page:
+                break
+
+            records.extend(page)
+            pages += 1
+
+            if len(page) < self.PAGE_SIZE:
+                break
+            if not ids:
+                raise CloudProviderError(
+                    f"QRZ retornou {len(page)} QSOs na página {pages}, mas não forneceu LOGIDS para continuar."
+                )
+
+            next_after = max(ids) + 1
+            if next_after <= after_logid:
+                raise CloudProviderError(
+                    f"QRZ não avançou a paginação: AFTERLOGID={after_logid}, maior LOGID recebido={max(ids)}."
+                )
+            after_logid = next_after
+
+            if expected and len(records) >= expected:
+                break
+            if pages > 10000:
+                raise CloudProviderError("QRZ paging safety limit reached")
+
+        if expected and len(records) != expected:
+            raise CloudProviderError(
+                f"Paginação QRZ retornou {len(records)} QSOs, mas STATUS informa {expected}."
+            )
+        return records, {
+            "coverage": "API_FULL_SYNC",
+            "strategy": "PAGED_MINIMAL",
+            "pages": pages,
+            "page_size": self.PAGE_SIZE,
             "remote_status_count": expected,
         }
+
+    def _download_verified(self, expected: int) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        direct_error = None
+        try:
+            return self._download_direct(expected)
+        except CloudProviderError as exc:
+            direct_error = str(exc)
+
+        try:
+            records, metadata = self._download_paged(expected)
+            metadata["direct_all_error"] = direct_error
+            return records, metadata
+        except CloudProviderError as paged_error:
+            raise CloudProviderError(
+                f"QRZ está conectado e STATUS informa {expected} QSOs, mas as duas formas oficiais de leitura falharam. "
+                f"FETCH ALL: {direct_error} | PAGINAÇÃO: {paged_error}. "
+                "O snapshot anterior foi preservado; não é necessário recadastrar a chave."
+            ) from paged_error
 
     def fetch_all(self) -> Dict[str, Any]:
         status_before = self._post("STATUS")
         expected_before = self._status_count(status_before)
-
-        try:
-            records, metadata = self._download_from_manifest(expected_before)
-        except CloudProviderError as first_error:
-            # A QSO can be added/deleted while a long synchronization is in
-            # progress. If STATUS changed, retry once against the new book state.
-            status_retry = self._post("STATUS")
-            expected_retry = self._status_count(status_retry)
-            if expected_retry == expected_before:
-                raise first_error
-            records, metadata = self._download_from_manifest(expected_retry)
-            metadata["retried_after_remote_change"] = True
-            expected_before = expected_retry
+        records, metadata = self._download_verified(expected_before)
 
         status_after = self._post("STATUS")
         expected_after = self._status_count(status_after) or expected_before
         if expected_after != expected_before:
-            # Do one clean retry if the book changed during the batch download.
-            records, metadata = self._download_from_manifest(expected_after)
+            # The book changed while downloading. Retry once against the new
+            # authoritative count instead of saving an ambiguous snapshot.
+            records, metadata = self._download_verified(expected_after)
             metadata["retried_after_remote_change"] = True
             status_after = self._post("STATUS")
             expected_after = self._status_count(status_after) or expected_after
