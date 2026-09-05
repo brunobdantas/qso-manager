@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import html
 import re
+import time
 from typing import Any, Dict, Iterable, List, Tuple
 from urllib.parse import parse_qs, unquote_plus
 
@@ -22,6 +23,8 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
     """QRZ adapter with STATUS validation and verified full-log download."""
 
     PAGE_SIZE = 250
+    READ_ATTEMPTS = 3
+    RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
     @staticmethod
     def _access_help(action: str, original: str) -> str:
@@ -85,22 +88,37 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         action = action.upper()
         form = {"KEY": key, "ACTION": action}
         form.update({k: str(v) for k, v in fields.items() if v is not None})
-        try:
-            response = self.client.post(
-                self.endpoint,
-                data=form,
-                headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.5 (PU2BRU)"},
-                timeout=180.0 if action == "FETCH" else 60.0,
-            )
-            response.raise_for_status()
-        except httpx.TimeoutException as exc:
-            option = self._safe_option_label(form.get("OPTION", ""))
-            raise CloudProviderError(
-                f"QRZ {action} excedeu o tempo de resposta"
-                + (f" (OPTION={option})" if option else "")
-            ) from exc
-        except httpx.HTTPError as exc:
-            raise CloudProviderError(f"Falha HTTP ao acessar QRZ {action}: {exc}") from exc
+        attempts = self.READ_ATTEMPTS if action in {"STATUS", "FETCH"} else 1
+        response = None
+        for attempt in range(1, attempts + 1):
+            try:
+                response = self.client.post(
+                    self.endpoint,
+                    data=form,
+                    headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.5 (PU2BRU)"},
+                    timeout=180.0 if action == "FETCH" else 60.0,
+                )
+                if response.status_code not in self.RETRYABLE_STATUS_CODES:
+                    response.raise_for_status()
+                    break
+                if attempt == attempts:
+                    response.raise_for_status()
+            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                if attempt == attempts:
+                    option = self._safe_option_label(form.get("OPTION", ""))
+                    raise CloudProviderError(
+                        f"QRZ {action} excedeu o tempo de resposta ou ficou indisponível"
+                        + (f" (OPTION={option})" if option else "")
+                    ) from exc
+            except httpx.HTTPError as exc:
+                raise CloudProviderError(f"Falha HTTP ao acessar QRZ {action}: {exc}") from exc
+
+            # Bounded exponential backoff. Never used for INSERT because a
+            # transport failure after submission has an ambiguous write result.
+            time.sleep(min(0.25 * (2 ** (attempt - 1)), 1.0))
+
+        if response is None:  # Defensive invariant; the loop always assigns it.
+            raise CloudProviderError(f"QRZ {action} não retornou resposta")
 
         parsed = self._parse_response(response.text)
         result = parsed.get("RESULT", "").upper()
