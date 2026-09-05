@@ -116,9 +116,19 @@ function LocalDataModal({ provider, onClose, onCleared }) {
   const [busy,setBusy] = useState(false)
   const [msg,setMsg] = useState('')
   const count = provider?.snapshot?.records || 0
+  const isLocal = provider?.source_kind === 'local_adif'
   if (!provider) return null
+  async function importADIF(file) {
+    if (!file) return
+    setBusy(true); setMsg('Lendo e validando o arquivo…')
+    try {
+      const result = await api(`/api/cloud/snapshots/${provider.provider}/adif`, { method:'PUT', body:JSON.stringify({content:await file.text(),filename:file.name}) })
+      setMsg(`${fmt(result.records)} QSOs importados de ${file.name}.`)
+      await onCleared()
+    } catch(e){setMsg(`Erro: ${e.message}`)} finally {setBusy(false)}
+  }
   async function clear() {
-    if (!window.confirm(`Apagar ${fmt(count)} QSOs do snapshot local de ${provider.label}?\n\nNada será apagado na plataforma remota. As credenciais serão mantidas.`)) return
+    if (!window.confirm(`Apagar ${fmt(count)} QSOs do snapshot local de ${provider.label}?\n\n${isLocal?'O arquivo ADIF original não será alterado.':'Nada será apagado na plataforma remota. As credenciais serão mantidas.'}`)) return
     setBusy(true); setMsg('')
     try {
       const result = await api(`/api/cloud/snapshots/${provider.provider}`, { method:'DELETE' })
@@ -129,20 +139,21 @@ function LocalDataModal({ provider, onClose, onCleared }) {
   return <div className="modal-backdrop"><div className="modal">
     <div className="modal-title"><div><span className="eyebrow">DADOS LOCAIS</span><h2>{provider.label}</h2></div><button className="icon-button" onClick={onClose}>×</button></div>
     <div className="local-data-summary"><strong>{fmt(count)}</strong><span>QSOs no snapshot ativo</span><small>Atualizado: {dateFmt(provider.snapshot?.downloaded_at)}</small></div>
-    <Notice>Esta ação remove somente a cópia local usada nas comparações. Conta remota, credenciais e backups não são apagados.</Notice>
+    <Notice>{isLocal?'Importe o export ADIF completo do Ham Radio Deluxe. Ele será preservado como uma fonte e comparado com os logbooks online. Uma nova importação substitui o snapshot anterior com backup automático.':'Esta ação remove somente a cópia local usada nas comparações. Conta remota, credenciais e backups não são apagados.'}</Notice>
     {msg&&<Notice tone={msg.startsWith('Erro')?'error':'ok'}>{msg}</Notice>}
-    <div className="modal-actions"><Button kind="secondary" onClick={onClose}>Fechar</Button><Button kind="danger" disabled={busy||count===0} onClick={clear}>{busy?'Apagando…':'Apagar dados locais'}</Button></div>
+    <div className="modal-actions"><Button kind="secondary" onClick={onClose}>Fechar</Button><div className="button-row">{isLocal&&<label className="btn btn-primary"><input style={{display:'none'}} type="file" accept=".adi,.adif,.txt" disabled={busy} onChange={e=>{const file=e.target.files?.[0];importADIF(file);e.target.value=''}}/>{busy?'Importando…':count?'Substituir ADIF':'Importar ADIF'}</label>}<Button kind="danger" disabled={busy||count===0} onClick={clear}>{busy?'Processando…':'Apagar dados locais'}</Button></div></div>
   </div></div>
 }
 
 function SourceCard({ p, job, onConfigure, onData, onSync }) {
   const busy = ['queued','running'].includes(job?.status)
+  const isLocal = p.source_kind === 'local_adif'
   return <article className={cls('source-card',p.provider==='QRZ'&&'source-card-truth')}>
-    <div className="source-card-top"><div className="provider-logo">{p.provider==='CLUBLOG'?'CL':p.provider}</div><div className="source-title"><div><b>{p.label}</b>{p.provider==='QRZ'&&<Pill tone="truth">referência</Pill>}</div><span>{p.configured?'Conectado':'Não configurado'}</span></div><span className={cls('status-light',p.configured&&'online')}/></div>
+    <div className="source-card-top"><div className="provider-logo">{p.provider==='CLUBLOG'?'CL':p.provider}</div><div className="source-title"><div><b>{p.label}</b>{p.provider==='QRZ'&&<Pill tone="truth">referência</Pill>}{isLocal&&<Pill>ADIF local</Pill>}</div><span>{isLocal?(p.configured?'Snapshot carregado':'Aguardando ADIF'):(p.configured?'Conectado':'Não configurado')}</span></div><span className={cls('status-light',p.configured&&'online')}/></div>
     <div className="source-stat"><strong>{fmt(p.snapshot?.records)}</strong><span>QSOs locais</span></div>
-    <div className="source-meta">Atualizado: <b>{dateFmt(p.snapshot?.downloaded_at)}</b></div>
+    <div className="source-meta">Atualizado: <b>{dateFmt(p.snapshot?.downloaded_at)}</b>{isLocal&&p.snapshot?.metadata?.filename&&<><br/>Arquivo: <b>{p.snapshot.metadata.filename}</b></>}</div>
     <Progress job={job} compact/>
-    <div className="source-actions triple"><Button kind="secondary" small onClick={()=>onConfigure(p)}>Conexão</Button><Button kind="secondary" small onClick={()=>onData(p)}>Dados locais</Button><Button small disabled={!p.configured||busy} onClick={()=>onSync(p.provider)}>{busy?'Atualizando…':'Atualizar'}</Button></div>
+    {isLocal?<div className="source-actions"><Button small onClick={()=>onData(p)}>{p.configured?'Substituir ADIF':'Importar ADIF'}</Button>{p.configured&&<Button kind="secondary" small onClick={()=>onData(p)}>Dados locais</Button>}</div>:<div className="source-actions triple"><Button kind="secondary" small onClick={()=>onConfigure(p)}>Conexão</Button><Button kind="secondary" small onClick={()=>onData(p)}>Dados locais</Button><Button small disabled={!p.configured||busy} onClick={()=>onSync(p.provider)}>{busy?'Atualizando…':'Atualizar'}</Button></div>}
   </article>
 }
 
@@ -152,7 +163,8 @@ function Dashboard({ status, analysis, workspace, refresh, navigate, onConfigure
   const [busy,setBusy] = useState(false)
   const providers = status?.providers || []
   const summary = workspace?.summary || {}
-  const connected = providers.filter(p=>p.configured).length
+  const remoteProviders = providers.filter(p=>p.source_kind!=='local_adif')
+  const connected = remoteProviders.filter(p=>p.configured).length
   async function syncOne(provider) {
     setMsg('')
     try { const job=await runSync(provider,x=>setJobs(v=>({...v,[provider]:x}))); setMsg(`${provider}: ${fmt(job.records)} QSOs atualizados.`); await refresh() }
@@ -161,16 +173,16 @@ function Dashboard({ status, analysis, workspace, refresh, navigate, onConfigure
   async function syncAll() {
     setBusy(true); setMsg('Atualizando fontes conectadas…')
     const errors=[]
-    for(const p of providers.filter(x=>x.configured)){try{await runSync(p.provider,x=>setJobs(v=>({...v,[p.provider]:x})))}catch(e){errors.push(`${p.provider}: ${e.message}`)}}
+    for(const p of remoteProviders.filter(x=>x.configured)){try{await runSync(p.provider,x=>setJobs(v=>({...v,[p.provider]:x})))}catch(e){errors.push(`${p.provider}: ${e.message}`)}}
     await refresh(); setBusy(false); setMsg(errors.length?`Concluído com ${errors.length} erro(s): ${errors.join(' | ')}`:'Todas as fontes foram atualizadas.')
   }
   return <>
-    <div className="page-hero"><div><span className="eyebrow">CENTRAL DE OPERAÇÃO</span><h1>Um cockpit para todo o seu log.</h1><p>Pesquise, filtre, compare, exporte e execute ações em lote sobre QRZ, WRL, Club Log e eQSL sem alternar entre plataformas.</p></div><Button onClick={syncAll} disabled={busy||connected===0}>{busy?'Atualizando…':'Atualizar tudo'}</Button></div>
+    <div className="page-hero"><div><span className="eyebrow">CENTRAL DE OPERAÇÃO</span><h1>Um cockpit para todo o seu log.</h1><p>Compare as plataformas online com o log local do Ham Radio Deluxe, pesquise e execute ações seguras sem alternar entre sistemas.</p></div><Button onClick={syncAll} disabled={busy||connected===0}>{busy?'Atualizando…':'Atualizar tudo'}</Button></div>
     {msg&&<Notice tone={msg.startsWith('Erro')||msg.includes('erro(s)')?'error':'info'}>{msg}</Notice>}
     <div className="journey-grid">
       <button onClick={()=>navigate('manager')}><span>01</span><b>Abrir QSO Manager</b><small>{fmt(summary.logical_qsos)} QSOs lógicos</small></button>
       <button onClick={()=>navigate('review')}><span>02</span><b>Revisar inconsistências</b><small>{fmt(summary.qrz_missing)} fora do QRZ</small></button>
-      <button onClick={()=>navigate('sources')}><span>03</span><b>Atualizar fontes</b><small>{connected}/4 conectadas</small></button>
+      <button onClick={()=>navigate('sources')}><span>03</span><b>Atualizar fontes</b><small>{connected}/{remoteProviders.length} online</small></button>
       <button onClick={()=>navigate('manual')}><span>04</span><b>Comparar ADI</b><small>auditoria manual</small></button>
     </div>
     <div className="metric-grid"><div className="metric"><span>QSOs lógicos</span><strong>{fmt(summary.logical_qsos)}</strong><small>visão consolidada</small></div><div className="metric metric-warn"><span>Fora do QRZ</span><strong>{fmt(summary.qrz_missing)}</strong><small>revisar antes de agir</small></div><div className="metric"><span>Multifonte</span><strong>{fmt(summary.multi_source)}</strong><small>presentes em 2+ fontes</small></div><div className="metric"><span>Com diferenças</span><strong>{fmt(summary.with_differences)}</strong><small>campos divergentes</small></div><div className="metric"><span>Duplicidades</span><strong>{fmt(summary.duplicates)}</strong><small>prováveis</small></div></div>
@@ -321,7 +333,7 @@ function ManualCompare(){const[a,setA]=useState(null),[b,setB]=useState(null),[r
 function Sources({ status, refresh, onConfigure, onData }) {
   const[jobs,setJobs]=useState({}),[msg,setMsg]=useState('')
   async function sync(p){try{const j=await runSync(p,x=>setJobs(v=>({...v,[p]:x})));setMsg(`${p}: ${fmt(j.records)} QSOs carregados.`);await refresh()}catch(e){setMsg(`Erro: ${e.message}`)}}
-  return <><div className="page-hero compact"><div><span className="eyebrow">FONTES & DADOS</span><h1>Conexão, snapshot e sincronização são coisas diferentes.</h1><p>Gerencie credenciais, baixe uma cópia atual e apague somente a base local quando quiser reconstruí-la.</p></div></div>{msg&&<Notice tone={msg.startsWith('Erro')?'error':'ok'}>{msg}</Notice>}<div className="journey-strip"><div><b>1. Conectar</b><span>Credenciais</span></div><i>→</i><div><b>2. Atualizar</b><span>Baixar snapshot</span></div><i>→</i><div><b>3. Gerenciar</b><span>QSO Manager</span></div></div><div className="source-grid">{(status?.providers||[]).map(p=><SourceCard key={p.provider} p={p} job={jobs[p.provider]} onConfigure={onConfigure} onData={onData} onSync={sync}/>)}</div></>
+  return <><div className="page-hero compact"><div><span className="eyebrow">FONTES & DADOS</span><h1>Fontes online e logs locais na mesma análise.</h1><p>Conecte os serviços online e importe o export ADIF completo do Ham Radio Deluxe para compará-lo continuamente com os demais snapshots.</p></div></div>{msg&&<Notice tone={msg.startsWith('Erro')?'error':'ok'}>{msg}</Notice>}<div className="journey-strip"><div><b>1. Conectar ou importar</b><span>API ou ADIF</span></div><i>→</i><div><b>2. Atualizar</b><span>Reconstruir snapshot</span></div><i>→</i><div><b>3. Comparar</b><span>QSO Manager</span></div></div><div className="source-grid">{(status?.providers||[]).map(p=><SourceCard key={p.provider} p={p} job={jobs[p.provider]} onConfigure={onConfigure} onData={onData} onSync={sync}/>)}</div></>
 }
 
 function ActivityPage(){const[rows,setRows]=useState([]),[loading,setLoading]=useState(true),[kind,setKind]=useState('');async function load(){setLoading(true);try{setRows(await api(`/api/qso-manager/activity?limit=500${kind?`&kind=${encodeURIComponent(kind)}`:''}`))}finally{setLoading(false)}}useEffect(()=>{load()},[kind]);const kinds=[...new Set(rows.map(x=>x.kind))];return <><div className="page-hero compact"><div><span className="eyebrow">HISTÓRICO DE AÇÕES</span><h1>Saiba o que foi feito e quando.</h1><p>Exports e operações em lote ficam registrados localmente para auditoria do fluxo.</p></div><Button kind="secondary" onClick={load}>Atualizar</Button></div><div className="filter-bar"><label><span>Tipo</span><select value={kind} onChange={e=>setKind(e.target.value)}><option value="">Todos</option>{kinds.map(x=><option key={x}>{x}</option>)}</select></label><Pill>{fmt(rows.length)} eventos</Pill></div><Panel title="Atividade recente">{loading?<div className="loading">Carregando…</div>:!rows.length?<Empty>Nenhuma ação registrada ainda.</Empty>:<div className="activity-list">{rows.map(x=><article key={x.id}><div><Pill tone={x.status==='ERROR'?'warn':x.status==='PARTIAL'?'warn':'ok'}>{x.kind}</Pill><b>{x.summary}</b><small>{dateFmt(x.timestamp)}</small></div><code>{x.details?.job_id||x.details?.filename||''}</code></article>)}</div>}</Panel></>}
@@ -335,5 +347,5 @@ export default function App(){
   useEffect(()=>{refresh()},[])
   const pageTitle=useMemo(()=>NAV.find(n=>n[0]===view)?.[1]||'QSO Manager',[view])
   function navigateManager(){setView('manager');setManagerSeed(x=>x+1)}
-  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">PU</div><div><b>QSO Manager</b><span>PU2BRU · v6</span></div></div><nav>{NAV.map(([k,l,icon])=><button key={k} className={view===k?'active':''} onClick={()=>setView(k)}><span className="nav-icon">{icon}</span><span>{l}</span>{k==='review'&&(analysis?.summary?.qrz_stale_candidates||0)>0&&<em>{analysis.summary.qrz_stale_candidates}</em>}</button>)}</nav><div className="sidebar-bottom"><span className="dot dot-on"/><div><b>Modo local</b><small>dados no seu PC</small></div></div></aside><main><header className="topbar"><div><span className="eyebrow">PU2BRU QSO MANAGER</span><h3>{pageTitle}</h3></div><div className="top-sources">{(status?.providers||[]).map(p=><div className="source-badge" key={p.provider}><span className={cls('dot',p.configured?'dot-on':'dot-off')}/><b>{p.provider}</b><span>{p.snapshot?.downloaded_at?`${fmt(p.snapshot?.records)} QSOs`:p.configured?'sem snapshot':'não conectado'}</span></div>)}</div></header><div className="content">{error&&<Notice tone="error">{error}</Notice>}{loading?<div className="loading">Carregando…</div>:<>{view==='home'&&<Dashboard status={status} analysis={analysis} workspace={workspace} refresh={refresh} navigate={setView} onConfigure={setConfigure} onData={setDataModal}/>} {view==='manager'&&<QSOManagerPage key={managerSeed} status={status} workspace={workspace} refresh={refresh}/>} {view==='review'&&<Review status={status} analysis={analysis} navigateManager={navigateManager}/>} {view==='manual'&&<ManualCompare/>} {view==='sources'&&<Sources status={status} refresh={refresh} onConfigure={setConfigure} onData={setDataModal}/>} {view==='activity'&&<ActivityPage/>} {view==='security'&&<Security/>}</>}</div></main>{configure&&<ConfigureModal provider={configure} onClose={()=>setConfigure(null)} onSaved={refresh}/>} {dataModal&&<LocalDataModal provider={dataModal} onClose={()=>setDataModal(null)} onCleared={async()=>{await refresh();setDataModal(null)}}/>}</div>
+  return <div className="app-shell"><aside className="sidebar"><div className="brand"><div className="brand-mark">PU</div><div><b>QSO Manager</b><span>PU2BRU · v6.1</span></div></div><nav>{NAV.map(([k,l,icon])=><button key={k} className={view===k?'active':''} onClick={()=>setView(k)}><span className="nav-icon">{icon}</span><span>{l}</span>{k==='review'&&(analysis?.summary?.qrz_stale_candidates||0)>0&&<em>{analysis.summary.qrz_stale_candidates}</em>}</button>)}</nav><div className="sidebar-bottom"><span className="dot dot-on"/><div><b>Modo local</b><small>dados no seu PC</small></div></div></aside><main><header className="topbar"><div><span className="eyebrow">PU2BRU QSO MANAGER</span><h3>{pageTitle}</h3></div><div className="top-sources">{(status?.providers||[]).map(p=><div className="source-badge" key={p.provider}><span className={cls('dot',p.configured?'dot-on':'dot-off')}/><b>{p.provider}</b><span>{p.snapshot?.downloaded_at?`${fmt(p.snapshot?.records)} QSOs`:p.source_kind==='local_adif'?'aguardando ADIF':p.configured?'sem snapshot':'não conectado'}</span></div>)}</div></header><div className="content">{error&&<Notice tone="error">{error}</Notice>}{loading?<div className="loading">Carregando…</div>:<>{view==='home'&&<Dashboard status={status} analysis={analysis} workspace={workspace} refresh={refresh} navigate={setView} onConfigure={setConfigure} onData={setDataModal}/>} {view==='manager'&&<QSOManagerPage key={managerSeed} status={status} workspace={workspace} refresh={refresh}/>} {view==='review'&&<Review status={status} analysis={analysis} navigateManager={navigateManager}/>} {view==='manual'&&<ManualCompare/>} {view==='sources'&&<Sources status={status} refresh={refresh} onConfigure={setConfigure} onData={setDataModal}/>} {view==='activity'&&<ActivityPage/>} {view==='security'&&<Security/>}</>}</div></main>{configure&&<ConfigureModal provider={configure} onClose={()=>setConfigure(null)} onSaved={refresh}/>} {dataModal&&<LocalDataModal provider={dataModal} onClose={()=>setDataModal(null)} onCleared={async()=>{await refresh();setDataModal(null)}}/>}</div>
 }

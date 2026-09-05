@@ -1,4 +1,4 @@
-"""Unified QSO Manager workspace over QRZ, WRL, Club Log and eQSL snapshots.
+"""Unified QSO Manager workspace over remote and local logbook snapshots.
 
 The workspace intentionally works from the locally downloaded snapshots.  It
 builds one logical QSO row from matching provider records, keeps the exact
@@ -19,7 +19,7 @@ from .fast_adif_comparison_service import FastADIFComparisonService
 
 
 class QSOManagerWorkspace:
-    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL")
+    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRD")
     CANONICAL_FIELDS = (
         "CALL", "QSO_DATE", "TIME_ON", "BAND", "FREQ", "MODE", "SUBMODE",
         "RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY",
@@ -92,9 +92,14 @@ class QSOManagerWorkspace:
             "provider": provider,
             "index": index,
             "external_id": self.hub._external_id(provider, record),
-            "capabilities": dict(PROVIDERS[provider].capabilities),
+            "capabilities": self._capabilities(provider),
             "record": record,
         }
+
+    @staticmethod
+    def _capabilities(provider: str) -> Dict[str, bool]:
+        adapter = PROVIDERS.get(provider)
+        return dict(adapter.capabilities) if adapter else dict(CloudHubService.LOCAL_CAPABILITIES)
 
     def _confirmation_sources(self, refs: Dict[str, int], snapshots: Dict[str, List[Dict[str, Any]]]) -> List[str]:
         confirmed: List[str] = []
@@ -488,7 +493,7 @@ class QSOManagerWorkspace:
             refs = row["refs"]
             item = {"logical_id": logical_id, "call": row["call"], "date": row["date"], "time": row["time"], "providers": row["providers"]}
             if action == "PUBLISH":
-                if not target_name or not PROVIDERS[target_name].capabilities.get("add"):
+                if not target_name or not self._capabilities(target_name).get("add"):
                     unsupported += 1
                     item["status"] = "unsupported"
                 elif target_name in refs:
@@ -498,7 +503,7 @@ class QSOManagerWorkspace:
                     actionable += 1
                     item["status"] = "ready"
             elif action == "UPDATE":
-                if not target_name or not PROVIDERS[target_name].capabilities.get("update"):
+                if not target_name or not self._capabilities(target_name).get("update"):
                     unsupported += 1
                     item["status"] = "unsupported"
                 elif target_name not in refs:
@@ -511,7 +516,7 @@ class QSOManagerWorkspace:
                     actionable += 1
                     item["status"] = "ready"
             elif action == "DELETE":
-                if not target_name or not PROVIDERS[target_name].capabilities.get("delete"):
+                if not target_name or not self._capabilities(target_name).get("delete"):
                     unsupported += 1
                     item["status"] = "unsupported"
                 elif target_name not in refs:
@@ -530,10 +535,10 @@ class QSOManagerWorkspace:
                 elif target_name in refs:
                     skipped += 1
                     item["status"] = "target_already_present"
-                elif not PROVIDERS[target_name].capabilities.get("add"):
+                elif not self._capabilities(target_name).get("add"):
                     unsupported += 1
                     item["status"] = "target_unsupported"
-                elif delete_source and not PROVIDERS[source_name].capabilities.get("delete"):
+                elif delete_source and not self._capabilities(source_name).get("delete"):
                     unsupported += 1
                     item["status"] = "source_delete_unsupported"
                 else:
@@ -555,6 +560,6 @@ class QSOManagerWorkspace:
             "changes": normalized_changes,
             "sample": rows[:20],
             "capability_matrix": {
-                provider: dict(PROVIDERS[provider].capabilities) for provider in self.PROVIDER_ORDER
+                provider: self._capabilities(provider) for provider in self.PROVIDER_ORDER
             },
         }

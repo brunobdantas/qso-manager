@@ -4,20 +4,24 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, adapter_for, records_to_adif
+from ..adif.parser import ADIFParser
 from .adif_comparison_service import ADIFComparisonService
 from .cloud_snapshot_store import CloudSnapshotStore
 from .credential_store import CredentialStore
 
 
 class CloudHubService:
-    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL")
-    PROVIDER_LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL"}
+    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRD")
+    REMOTE_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL")
+    PROVIDER_LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL", "HRD": "Ham Radio Deluxe"}
     PROVIDER_NOTES = {
         "QRZ": "Base preferencial. Leitura completa e inclusão segura; edição/exclusão remota ficam bloqueadas para proteger confirmações.",
         "WRL": "API oficial de leitura e escrita. Contatos possuem ID estável e podem ser incluídos, corrigidos e excluídos.",
         "CLUBLOG": "Download do log, inclusão em tempo real e exclusão por identidade exata. O export é minimalista e pode descartar campos do log original.",
         "EQSL": "OutBox em ADIF e inclusão por interface de logger. O download é uma representação normalizada; edição/exclusão remota não é exposta.",
+        "HRD": "Snapshot local importado de um arquivo ADIF do Ham Radio Deluxe. É comparado com todas as fontes online e nunca altera o arquivo original.",
     }
+    LOCAL_CAPABILITIES = {"read": True, "add": False, "update": False, "delete": False}
 
     def __init__(self, credentials: Optional[CredentialStore] = None, snapshots: Optional[CloudSnapshotStore] = None) -> None:
         self.credentials = credentials or CredentialStore()
@@ -27,17 +31,19 @@ class CloudHubService:
     def status(self) -> Dict[str, Any]:
         providers = []
         for provider in self.PROVIDER_ORDER:
-            cred = self.credentials.get(provider)
-            adapter_cls = PROVIDERS[provider]
+            is_local = provider not in self.REMOTE_PROVIDERS
+            cred = {} if is_local else self.credentials.get(provider)
+            snapshot = self.snapshots.summary(provider)
             providers.append({
                 "provider": provider,
                 "label": self.PROVIDER_LABELS[provider],
-                "configured": bool(cred),
+                "configured": bool(snapshot["records"]) if is_local else bool(cred),
                 "credentials": self.credentials.masked(cred),
-                "capabilities": dict(adapter_cls.capabilities),
-                "snapshot": self.snapshots.summary(provider),
+                "capabilities": dict(self.LOCAL_CAPABILITIES if is_local else PROVIDERS[provider].capabilities),
+                "snapshot": snapshot,
                 "note": self.PROVIDER_NOTES[provider],
                 "truth_priority": 1 if provider == "QRZ" else 2,
+                "source_kind": "local_adif" if is_local else "remote_api",
             })
         return {
             "truth_source": "QRZ",
@@ -82,7 +88,7 @@ class CloudHubService:
 
     def sync_all(self) -> Dict[str, Any]:
         results: List[Dict[str, Any]] = []
-        for provider in self.PROVIDER_ORDER:
+        for provider in self.REMOTE_PROVIDERS:
             if not self.credentials.configured(provider):
                 results.append({"provider": provider, "ok": False, "skipped": True, "error": "not configured"})
                 continue
@@ -91,6 +97,27 @@ class CloudHubService:
             except Exception as exc:
                 results.append({"provider": provider, "ok": False, "error": str(exc)})
         return {"results": results, "analysis": self.analysis() if self.snapshots.summary("QRZ")["records"] else None}
+
+    def import_adif_snapshot(self, provider: str, content: str, filename: str) -> Dict[str, Any]:
+        """Replace a local source snapshot with a complete ADIF export."""
+        provider = self._provider(provider)
+        if provider in self.REMOTE_PROVIDERS:
+            raise CloudProviderError(f"{provider} must be synchronized through its remote connection")
+        if not content.strip():
+            raise CloudProviderError("O arquivo ADIF está vazio")
+        records, errors = ADIFParser().parse(content)
+        if not records:
+            detail = f": {errors[0]}" if errors else ""
+            raise CloudProviderError(f"Nenhum QSO válido foi encontrado no arquivo ADIF{detail}")
+        backup = self.snapshots.backup(provider)
+        metadata = {
+            "source": "local_adif",
+            "coverage": "FULL_EXPORT",
+            "filename": (filename or "ham-radio-deluxe.adi")[:255],
+            "parse_errors": errors[:20],
+        }
+        summary = self.snapshots.save(provider, records, metadata)
+        return {"ok": True, **summary, "backup": str(backup) if backup else None, "parse_errors": errors[:20]}
 
     def analysis(self) -> Dict[str, Any]:
         qrz = self.snapshots.load("QRZ")
@@ -208,7 +235,7 @@ class CloudHubService:
             raise CloudProviderError("Source and target must be different")
         if not confirm:
             return {"dry_run": True, "source": source, "target": target, "qso": self.record(source, index), "capabilities": PROVIDERS[target].capabilities}
-        if not PROVIDERS[target].capabilities.get("add"):
+        if target not in self.REMOTE_PROVIDERS or not PROVIDERS[target].capabilities.get("add"):
             raise CloudProviderError(f"{target} does not support add")
         row = self.record(source, index)["record"]
         backup = self.snapshots.backup(target)
