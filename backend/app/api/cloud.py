@@ -60,6 +60,12 @@ def disconnect(provider: str):
     return _run(lambda: CloudHubService().disconnect(provider))
 
 
+@router.delete("/snapshots/{provider}", response_model=dict)
+def clear_local_snapshot(provider: str):
+    """Delete only the active local snapshot. Remote data and credentials stay untouched."""
+    return _run(lambda: CloudHubService().clear_snapshot(provider))
+
+
 @router.post("/connections/{provider}/test", response_model=dict)
 def test_connection(provider: str):
     return _run(lambda: CloudHubService().test(provider))
