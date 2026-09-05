@@ -25,9 +25,6 @@ class CloudHubService(BaseCloudHubService):
     def _legacy_eqsl_snapshot(self) -> bool:
         summary = self.snapshots.summary("EQSL")
         metadata = summary.get("metadata") or {}
-        # Releases before 5.1 could accidentally parse the HTML control page as
-        # a one-record ADIF file. New eQSL snapshots always record a verified
-        # download_strategy; legacy snapshots are quarantined until refreshed.
         return bool(summary.get("records")) and bool(metadata.get("normalized_export")) and not metadata.get("download_strategy")
 
     @staticmethod
@@ -102,6 +99,10 @@ class CloudHubService(BaseCloudHubService):
         result["probable_duplicates"] = existing
         result["summary"]["probable_duplicates"] = len(existing)
         return result
+
+    def clear_snapshot(self, provider: str) -> Dict[str, Any]:
+        provider = self._provider(provider)
+        return {"ok": True, **self.snapshots.clear(provider)}
 
     def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False):
         normalized = dict(changes)
