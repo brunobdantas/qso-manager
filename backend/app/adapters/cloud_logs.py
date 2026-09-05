@@ -66,8 +66,25 @@ class CloudLogAdapter(ABC):
 
     def __init__(self, credentials: Dict[str, Any], client: Optional[httpx.Client] = None) -> None:
         self.credentials = credentials
-        self.client = client or httpx.Client(timeout=60.0, follow_redirects=True)
+        self.client = client or self._build_client()
         self._owns_client = client is None
+
+    @staticmethod
+    def _build_client() -> httpx.Client:
+        """Create the shared HTTP client without failing on an unsupported host proxy.
+
+        HTTPX 0.26 accepts ``socks5`` but some launchers expose ``socks5h`` in
+        the process environment.  Prefer the configured environment in normal
+        installations and fail over to a direct client only for this specific
+        incompatibility.  Credentials and proxy URLs are never included in the
+        resulting error path.
+        """
+        try:
+            return httpx.Client(timeout=60.0, follow_redirects=True)
+        except ValueError as exc:
+            if "Unknown scheme for proxy URL" not in str(exc):
+                raise
+            return httpx.Client(timeout=60.0, follow_redirects=True, trust_env=False)
 
     def close(self) -> None:
         if self._owns_client:

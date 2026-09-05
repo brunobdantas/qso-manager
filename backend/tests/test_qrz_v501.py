@@ -199,3 +199,40 @@ def test_qrz_v505_removes_accidental_whitespace_from_pasted_key():
     )
     adapter.test_connection()
     assert captured["KEY"] == "ABCD-0000-1111-2222"
+
+
+def test_qrz_read_retries_transient_server_failure(monkeypatch):
+    attempts = []
+
+    def handler(request):
+        attempts.append(_form(request))
+        if len(attempts) < 3:
+            return httpx.Response(503, text="temporarily unavailable")
+        return httpx.Response(200, text="RESULT=OK&DATA=QSOS%3D10")
+
+    monkeypatch.setattr("app.adapters.qrz_cloud_v501.time.sleep", lambda _: None)
+    adapter = QRZCloudAdapterV501(
+        {"api_key": "ABCD-0000-1111-2222"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.test_connection()
+    assert result["ok"] is True
+    assert len(attempts) == 3
+
+
+def test_qrz_insert_never_retries_ambiguous_write_failure(monkeypatch):
+    attempts = []
+
+    def handler(request):
+        attempts.append(_form(request))
+        return httpx.Response(503, text="temporarily unavailable")
+
+    monkeypatch.setattr("app.adapters.qrz_cloud_v501.time.sleep", lambda _: None)
+    adapter = QRZCloudAdapterV501(
+        {"api_key": "ABCD-0000-1111-2222"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    with pytest.raises(CloudProviderError):
+        adapter.add_qso({"CALL": "K1ABC", "QSO_DATE": "20260905", "TIME_ON": "123900"})
+    assert len(attempts) == 1
+    assert attempts[0]["ACTION"] == "INSERT"
