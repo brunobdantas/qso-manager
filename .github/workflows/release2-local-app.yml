@@ -36,3 +36,29 @@ jobs:
         run: python acceptance/run_release1_acceptance.py
       - name: Release 2 verification
         run: python scripts/verify_release2.py
+
+      - name: ADIF and QSL browser workflow
+        env:
+          QSO_MANAGER_DATA_DIR: ${{ runner.temp }}/qso-ui-data
+          NODE_PATH: ${{ runner.temp }}/qso-browser/node_modules
+          PYTHONPATH: backend
+        shell: bash
+        run: |
+          npm install --prefix "$RUNNER_TEMP/qso-browser" --no-save playwright@1.62.1
+          export QSO_CHROME_PATH="$(command -v google-chrome)"
+          test -n "$QSO_CHROME_PATH"
+          python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 > "$RUNNER_TEMP/qso-ui-server.log" 2>&1 &
+          qso_server_pid=$!
+          trap 'kill "$qso_server_pid"' EXIT
+          for attempt in $(seq 1 30); do curl -sf http://127.0.0.1:8000/api/health && break || sleep 1; done
+          node scripts/verify_release7_ui.cjs
+      - name: Upload UI verification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: QSO-Manager-7-UI-Verification
+          path: |
+            qsl-ui.png
+            comparison-ui.png
+            ui-qsl-revisado.zip
+          if-no-files-found: ignore
