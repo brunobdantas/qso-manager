@@ -214,7 +214,9 @@ class ADIFWorkbench:
             # Source labels must remain distinct even for two versions with same name.
             a, b = base['name'] + ' [base]', other['name'] + ' [' + sid[-6:] + ']'
             result = self.comparator.compare(records_to_adif(base['records']), records_to_adif(other['records']), a, b,
-                base['coverage'], other['coverage'], base['filename'], other['filename'])
+                base['coverage'] if base['kind'] == 'LOG' else 'PARTIAL_EXPORT',
+                other['coverage'] if other['kind'] == 'LOG' else 'PARTIAL_EXPORT',
+                base['filename'], other['filename'])
             comparisons.append({'source_id': sid, 'name': other['name'], **result})
             for category in ('missing_in_a', 'missing_in_b', 'field_differences', 'tolerated_differences', 'probable_duplicates'):
                 findings.extend({'category': category, 'comparison': other['name'], **item} for item in result[category])

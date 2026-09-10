@@ -153,3 +153,11 @@ def test_api_end_to_end_zip_and_source_validation(tmp_path,monkeypatch):
         assert {'log-original.adi','log-com-confirmacoes.adi','alteracoes.csv','evidencias.json'} <= set(archive.namelist())
         assert archive.read('log-original.adi').decode()==w.load(base)['content']
     assert client.post('/api/adif-workbench/qsl',json={**body,'tolerance':301}).status_code==422
+
+
+def test_complete_inbox_is_not_a_complete_qso_log(tmp_path):
+    w=ADIFWorkbench(tmp_path)
+    base=save(w,'QRZ',[qso(),qso('090000',CALL='OK1AR')])
+    inbox=save(w,'Todos os recebidos',[qso()],'EQSL_RECEIVED','FULL_EXPORT')
+    result=w.compare(base,[inbox])
+    assert result['comparisons'][0]['missing_in_b'][0]['confidence']=='INSUFFICIENT_COVERAGE'
