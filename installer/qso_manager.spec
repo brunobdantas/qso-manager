@@ -1,5 +1,4 @@
 # -*- mode: python ; coding: utf-8 -*-
-import os
 import sys
 from pathlib import Path
 
@@ -30,21 +29,33 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+# Use onedir rather than onefile. Besides faster startup, this avoids extracting
+# python312.dll to a temporary _MEI directory, which is more likely to be
+# blocked/quarantined by endpoint security on user machines.
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries,
-    a.datas,
     [],
+    exclude_binaries=True,
     name='PU2BRU-QSO-Manager',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=False,
     console=False,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+)
+
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='PU2BRU-QSO-Manager',
 )

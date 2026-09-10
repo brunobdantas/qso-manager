@@ -1,5 +1,5 @@
 #define MyAppName "PU2BRU QSO Manager"
-#define MyAppVersion "7.0.0"
+#define MyAppVersion "7.0.1"
 #define MyAppPublisher "PU2BRU"
 #define MyAppExeName "PU2BRU-QSO-Manager.exe"
 
@@ -27,7 +27,9 @@ RestartApplications=no
 Name: "desktopicon"; Description: "Criar atalho na área de trabalho"; GroupDescription: "Atalhos:"; Flags: checkedonce
 
 [Files]
-Source: "..\dist\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+; v7.0.1 uses a PyInstaller onedir bundle so Python and its runtime DLLs live
+; beside the executable instead of being unpacked into %TEMP%\_MEI... at startup.
+Source: "..\dist\PU2BRU-QSO-Manager\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
