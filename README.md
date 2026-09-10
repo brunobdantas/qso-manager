@@ -2,7 +2,24 @@
 
 Central local para baixar, comparar, reconciliar e gerenciar QSOs sem depender de abrir cada plataforma individualmente.
 
-## Release 5 — Connected QSO Hub
+## Release 7.0 — Comparação ADIF e Central de QSLs
+
+- **Comparar ADI:** fontes locais nomeadas e persistentes; uma base contra múltiplas fontes; integração com snapshots já baixados; cobertura completa/parcial; resultados por QSO, campos, duplicidades e diferenças toleradas; busca, filtros, paginação e relatório CSV compatível com Excel.
+- **Central de QSLs:** importação separada de eQSL recebidos (Inbox), relatório LoTW e QSL em papel; matriz de enviado/recebido e datas por serviço; propostas com evidência e revisão de ambiguidades.
+- **Correção local:** exporta ZIP com original, cópia ADIF completa corrigida, CSV e evidências JSON. Altera somente recebido/data das propostas selecionadas; preserva os demais campos, tags desconhecidas e cabeçalho do ADIF original. Não faz UPDATE/REPLACE remoto no QRZ.
+- **Fontes:** ficam em `adif_sources` no diretório persistente do aplicativo. Substituir/remover fonte preserva backup. Fontes da área de comparação são independentes dos cinco provedores fixos da tabela QSO Manager.
+
+### Como usar
+
+1. Abra **Comparar ADI → Gerenciar / importar fontes → Adicionar ADIF**. Informe nome, tipo e cobertura. Deixe parcial quando não tiver certeza.
+2. Escolha o log de referência e marque as fontes para comparar. Explore os achados e baixe o CSV.
+3. Abra **Central de QSLs**. Cadastre o arquivo de recebidos eQSL como **eQSL recebidos (Inbox)** e `lotwreport.adi` como **Relatório LoTW**. OutBox é um log, não uma lista de recebidos.
+4. Escolha o log de destino (ADIF importado ou snapshot QRZ) e as fontes de evidência. Analise, revise e selecione as propostas prontas.
+5. **Gerar ADIF revisado + evidências** baixa o pacote para conferência. O original e os serviços online permanecem preservados. Reimportação no QRZ não garante atualização de campos; o CSV também serve para ajustes manuais.
+
+A janela de até cinco minutos exige um único candidato compatível em indicativo, data, banda, modo e frequência disponível. Múltiplos candidatos, datas conflitantes e estados especiais ficam para revisão. Datas ausentes não são inventadas. LoTW exige confirmação explícita; confirmação em um serviço não é convertida em confirmação de outro.
+
+## Connected QSO Hub
 
 O fluxo principal conecta **QRZ, World Radio League (WRL), Club Log e eQSL** ao backend local. Cada fonte pode ser atualizada sob demanda e o QSO Manager preserva um snapshot local completo para pesquisa, comparação e evidência.
 

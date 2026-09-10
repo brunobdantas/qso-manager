@@ -96,6 +96,22 @@ def _run_self_test() -> int:
         if cloud_status.get("truth_source") != "QRZ" or not required_providers.issubset(provider_names):
             return 16
 
+        # Exercise new ADIF/QSL flow inside the frozen executable as well.
+        from tempfile import TemporaryDirectory
+        from app.services.adif_workbench import ADIFWorkbench
+        from app.adapters.cloud_logs import records_to_adif
+        if not {"/api/adif-workbench/compare", "/api/adif-workbench/qsl/export"}.issubset(paths):
+            return 17
+        with TemporaryDirectory() as scratch:
+            workbench = ADIFWorkbench(scratch)
+            record = {"CALL": "K1TEST", "QSO_DATE": "20260908", "TIME_ON": "120000", "BAND": "20m", "MODE": "FT8"}
+            base = workbench.save("base", "LOG", "FULL_EXPORT", records_to_adif([record]), "base.adi")["id"]
+            source = workbench.save("received", "EQSL_RECEIVED", "PARTIAL_EXPORT", records_to_adif([record]), "received.adi")["id"]
+            result = workbench.qsl(base, [source])
+            if result["summary"].get("READY") != 1:
+                return 18
+            workbench.export_qsl(base, [source], 300, result["revision"], [result["proposals"][0]["id"]])
+
         # Exercise the same Uvicorn configuration used by the GUI startup.
         # This catches formatter/console regressions in the packaged binary.
         config = _make_uvicorn_config(app, settings.backend_port)

@@ -5,6 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from .api import adif_workbench
 from .core.config import settings
 from .core.runtime import frontend_dist_dir
 from .db.database import engine, Base
@@ -15,7 +16,7 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(
     title="PU2BRU QSO Manager API",
     description="Connected QSO management, reconciliation and safe logbook synchronization",
-    version="6.1.0",
+    version="7.0.0",
 )
 
 app.add_middleware(
@@ -26,6 +27,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+app.include_router(adif_workbench.router)
 app.include_router(health.router)
 app.include_router(qsos.router)
 app.include_router(imports.router)
@@ -52,7 +54,7 @@ def root():
         return FileResponse(index)
     return {
         "name": "PU2BRU QSO Manager API",
-        "version": "6.1.0",
+        "version": "7.0.0",
         "docs": "/docs",
         "health": "/api/health",
         "frontend": "not-built",
