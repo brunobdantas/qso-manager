@@ -120,6 +120,27 @@ jobs:
             throw "Installer output not found"
           }
 
+      - name: Smoke-test installed copy
+        shell: pwsh
+        env:
+          QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-installed-self-test
+        run: |
+          $installDir = Join-Path $env:TEMP "PU2BRU-QSO-Manager-installed"
+          if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup.exe"
+          $install = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait -PassThru
+          if ($install.ExitCode -ne 0) { throw "Silent installer failed with exit code $($install.ExitCode)" }
+          $installedExe = Join-Path $installDir "PU2BRU-QSO-Manager.exe"
+          $installedPython = Join-Path $installDir "_internal\python312.dll"
+          $installedRuntime = Join-Path $installDir "_internal\vcruntime140.dll"
+          if (-not (Test-Path $installedExe)) { throw "Installed executable not found" }
+          if (-not (Test-Path $installedPython)) { throw "Installed python312.dll not found" }
+          if (-not (Test-Path $installedRuntime)) { throw "Installed vcruntime140.dll not found" }
+          $process = Start-Process -FilePath $installedExe -ArgumentList "--self-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "Installed app self-test failed with exit code $($process.ExitCode)" }
+          $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
+          if (-not (Test-Path $db)) { throw "Installed app did not create its database" }
+
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
         with:
