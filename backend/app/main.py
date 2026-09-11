@@ -37,7 +37,8 @@ app.include_router(comparisons.router)
 app.include_router(cloud.router)
 app.include_router(sync_jobs.router)
 app.include_router(qso_manager.router)
-app.include_router(advanced.router)\napp.include_router(v8_online.router)
+app.include_router(advanced.router)
+app.include_router(v8_online.router)
 
 FRONTEND_DIST = frontend_dist_dir()
 ASSETS_DIR = FRONTEND_DIST / "assets"
