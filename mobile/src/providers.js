@@ -11,6 +11,30 @@ async function request(options){
 async function get(url,params={},headers={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:''),headers})}
 async function postForm(url,data,headers={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data)})}
 function parsedQuery(text){const p=new URLSearchParams(text);return Object.fromEntries([...p.entries()].map(([k,v])=>[k.toUpperCase(),v]))}
+export function normalizeQRZKey(value){return String(value||'').replace(/\s+/g,'').trim()}
+function qrzError(data,action){
+  const result=String(data.RESULT||'').toUpperCase(), reason=String(data.REASON||'').trim()
+  if(result==='AUTH'){
+    throw new Error('QRZ recusou '+action+' por permissão/assinatura. A Logbook API exige uma assinatura QRZ no nível XML ou superior. Resposta: '+(reason||'AUTH'))
+  }
+  if(result==='FAIL'){
+    const low=reason.toLowerCase()
+    if(low.includes('key')||low.includes('access')||low.includes('invalid')){
+      throw new Error('QRZ recusou a Logbook API Key. Confira se é a chave do logbook correto (não a senha do QRZ). Resposta: '+(reason||'FAIL'))
+    }
+    throw new Error('QRZ recusou '+action+': '+(reason||'FAIL'))
+  }
+}
+async function qrzPost(c,action,option){
+  const key=normalizeQRZKey(c?.api_key)
+  if(!key)throw new Error('QRZ Logbook API Key não configurada')
+  const payload={KEY:key,ACTION:String(action||'').toUpperCase()}
+  if(option)payload.OPTION=option
+  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/8.0.1 (PU2BRU)'})
+  const data=parsedQuery(r.text)
+  qrzError(data,payload.ACTION)
+  return data
+}
 function cleanHtml(text){return String(text||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim()}
 function hrefs(text){const out=[];const re=/href=["']([^"']+\.(?:adi|adif|txt)(?:\?[^"']*)?)["']/ig;let m;while((m=re.exec(String(text||''))))out.push(m[1]);return out}
 async function adifFromBuildPage(endpoint,params){
@@ -27,23 +51,43 @@ async function adifFromBuildPage(endpoint,params){
 }
 
 export async function fetchQRZ(c){
-  if(!c?.api_key)throw new Error('QRZ API Key não configurada')
+  // Validate the exact logbook key first. QRZ requires KEY + ACTION and an identifiable User-Agent.
+  await qrzPost(c,'STATUS')
+
+  // Prefer QRZ's canonical full-book request. This is also what the hardened
+  // Windows adapter uses. Large books fall back to the documented paging form.
+  try{
+    const all=await qrzPost(c,'FETCH','ALL')
+    const records=parseAdif(all.ADIF||'')
+    const count=Number(all.COUNT||0)
+    if(records.length||count===0){
+      if(count&&records.length!==count)throw new Error('FETCH ALL incompleto: QRZ informou '+count+' e foram lidos '+records.length)
+      return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'DIRECT_ALL',pages:1}}
+    }
+  }catch(e){
+    if(String(e?.message||'').startsWith('QRZ recusou'))throw e
+    // Timeout/incomplete direct fetch is recoverable through paging below.
+  }
+
   let after=0,pages=0,records=[]
   while(true){
-    const r=await postForm('https://logbook.qrz.com/api',{KEY:c.api_key,ACTION:'FETCH',OPTION:'MAX:250,AFTERLOGID:'+after+',TYPE:ADIF,STATUS:ALL'},{'User-Agent':'PU2BRU-QSO-Manager/8.0'})
-    const data=parsedQuery(r.text)
-    if(['FAIL','AUTH'].includes(String(data.RESULT||'').toUpperCase()))throw new Error(data.REASON||'QRZ recusou a requisição')
+    // Keep paging options minimal. Some QRZ deployments reject compound
+    // selectors even though TYPE/STATUS are documented defaults.
+    const data=await qrzPost(c,'FETCH','MAX:250,AFTERLOGID:'+after)
     const page=parseAdif(data.ADIF||'')
     records=records.concat(page);pages++
     if(page.length<250)break
-    const ids=page.map(x=>Number(x.APP_QRZLOG_LOGID||x.QSO_ID)).filter(Number.isFinite)
-    if(!ids.length)throw new Error('QRZ não informou LOGID para paginação')
+    const ids=[
+      ...page.map(x=>Number(x.APP_QRZLOG_LOGID||x.QSO_ID)).filter(Number.isFinite),
+      ...String(data.LOGIDS||'').split(',').map(x=>Number(x.trim())).filter(Number.isFinite),
+    ]
+    if(!ids.length)throw new Error('QRZ não informou LOGID para continuar a paginação')
     const next=Math.max(...ids)+1
     if(next<=after)throw new Error('Paginação do QRZ não avançou')
     after=next
     if(pages>10000)throw new Error('Limite de paginação QRZ atingido')
   }
-  return {records,metadata:{coverage:'API_FULL_SYNC',pages}}
+  return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'PAGED_MINIMAL',pages}}
 }
 
 export async function fetchWRL(c){
@@ -124,8 +168,8 @@ export async function pushHRDLog(c,record){
 
 export async function testProvider(provider,c){
   if(provider==='QRZ'){
-    const r=await postForm('https://logbook.qrz.com/api',{KEY:c.api_key,ACTION:'STATUS'})
-    const d=parsedQuery(r.text);if(String(d.RESULT||'').toUpperCase()!=='OK')throw new Error(d.REASON||'Falha QRZ');return 'QRZ conectado'
+    const d=await qrzPost(c,'STATUS')
+    return 'QRZ conectado'+(d.DATA?' · '+String(d.DATA).slice(0,120):'')
   }
   if(provider==='WRL'){const r=await request({method:'GET',url:'https://api.worldradioleague.com/v1/me',headers:{Authorization:'Bearer '+c.api_key}});return JSON.parse(r.text)?.data?'WRL conectado':'WRL respondeu'}
   if(provider==='CLUBLOG'){const x=await fetchClubLog(c);return 'Club Log conectado · '+x.records.length+' QSOs'}

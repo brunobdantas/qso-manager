@@ -1,6 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseAdif, recordToAdif, matchRecords, consolidate, buildQsl, hrdlogPlan } from '../src/core.js'
+import { normalizeQRZKey } from '../src/providers.js'
 
 const q=(call,date,time,extra={})=>({CALL:call,QSO_DATE:date,TIME_ON:time,BAND:'20M',MODE:'FT8',FREQ:'14.074',...extra})
 
@@ -48,4 +49,10 @@ test('HRDLog plan excludes close review candidates and returns safe absence',()=
   const plan=hrdlogPlan(qrz,hrd)
   assert.equal(plan.length,1)
   assert.equal(plan[0].call,'EA1XYZ')
+})
+
+
+test('QRZ key normalization removes copy/paste whitespace',()=>{
+  assert.equal(normalizeQRZKey('  ABCD-1234-5678-90AB\n'), 'ABCD-1234-5678-90AB')
+  assert.equal(normalizeQRZKey('ABCD 1234 5678 90AB'), 'ABCD1234567890AB')
 })
