@@ -88,7 +88,7 @@ class CredentialStore:
 
     @staticmethod
     def masked(values: Dict[str, Any]) -> Dict[str, Any]:
-        secret_names = {"api_key", "password", "app_password", "key"}
+        secret_names = {"api_key", "password", "app_password", "key", "upload_code", "code"}
         out: Dict[str, Any] = {}
         for name, value in values.items():
             if name in secret_names and value:
