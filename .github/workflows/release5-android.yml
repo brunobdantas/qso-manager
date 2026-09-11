@@ -1,0 +1,82 @@
+name: Release 5 Android APK
+
+on:
+  push:
+    branches: [main, feature/v8-mobile-online]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: mobile/package.json
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install mobile dependencies
+        working-directory: mobile
+        run: npm install --no-audit --no-fund
+
+      - name: Mobile core tests
+        working-directory: mobile
+        run: npm test
+
+      - name: Build mobile web bundle
+        working-directory: mobile
+        run: npm run build
+
+      - name: Generate Android project
+        working-directory: mobile
+        run: |
+          npx cap add android
+          npx cap sync android
+
+      - name: Set Android version
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("mobile/android/app/build.gradle")
+          text = p.read_text()
+          text = text.replace("versionCode 1", "versionCode 80000")
+          text = text.replace('versionName "1.0"', 'versionName "8.0.0"')
+          p.write_text(text)
+          PY
+
+      - name: Build installable APK
+        working-directory: mobile/android
+        run: ./gradlew assembleDebug --stacktrace
+
+      - name: Verify APK
+        shell: bash
+        run: |
+          APK="mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "$APK"
+          mkdir -p dist-android
+          cp "$APK" "dist-android/PU2BRU-QSO-Manager-v8.0.0-Android.apk"
+          ls -lh dist-android/PU2BRU-QSO-Manager-v8.0.0-Android.apk
+          sha256sum dist-android/PU2BRU-QSO-Manager-v8.0.0-Android.apk
+
+      - name: Upload Android APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: PU2BRU-QSO-Manager-Android
+          path: dist-android/PU2BRU-QSO-Manager-v8.0.0-Android.apk
+          if-no-files-found: error
+          retention-days: 30

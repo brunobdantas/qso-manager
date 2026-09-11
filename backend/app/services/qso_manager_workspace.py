@@ -19,7 +19,7 @@ from .fast_adif_comparison_service import FastADIFComparisonService
 
 
 class QSOManagerWorkspace:
-    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRD")
+    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
     CANONICAL_FIELDS = (
         "CALL", "QSO_DATE", "TIME_ON", "BAND", "FREQ", "MODE", "SUBMODE",
         "RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY",
