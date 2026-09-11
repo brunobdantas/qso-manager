@@ -8,14 +8,14 @@ from fastapi.staticfiles import StaticFiles
 from .core.config import settings
 from .core.runtime import frontend_dist_dir
 from .db.database import engine, Base
-from .api import health, qsos, imports, reconciliation, backups, audit, integrations, comparisons, cloud, sync_jobs, qso_manager, advanced
+from .api import health, qsos, imports, reconciliation, backups, audit, integrations, comparisons, cloud, sync_jobs, qso_manager, advanced, v8_online
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="PU2BRU QSO Manager API",
     description="Connected QSO management, reconciliation, advanced ADIF analysis and safe logbook synchronization",
-    version="7.0.1",
+    version="8.0.0",
 )
 
 app.add_middleware(
@@ -37,7 +37,7 @@ app.include_router(comparisons.router)
 app.include_router(cloud.router)
 app.include_router(sync_jobs.router)
 app.include_router(qso_manager.router)
-app.include_router(advanced.router)
+app.include_router(advanced.router)\napp.include_router(v8_online.router)
 
 FRONTEND_DIST = frontend_dist_dir()
 ASSETS_DIR = FRONTEND_DIST / "assets"
@@ -53,7 +53,7 @@ def root():
         return FileResponse(index)
     return {
         "name": "PU2BRU QSO Manager API",
-        "version": "7.0.1",
+        "version": "8.0.0",
         "docs": "/docs",
         "health": "/api/health",
         "frontend": "not-built",
