@@ -1,0 +1,13 @@
+{
+  "appId": "net.pu2bru.qsomanager",
+  "appName": "PU2BRU QSO Manager",
+  "webDir": "dist",
+  "server": {
+    "androidScheme": "https"
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
+}
