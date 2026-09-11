@@ -2,7 +2,7 @@ const yes=v=>['Y','YES','TRUE','1','C'].includes(String(v||'').trim().toUpperCas
 const txt=v=>String(v??'').trim()
 const upper=v=>txt(v).toUpperCase()
 const dateKey=v=>{const t=txt(v).replace(/[-/]/g,'');return /^\d{8}$/.test(t)?t:txt(v)}
-const timeKey=v=>{const t=txt(v).replace(/:/g,'');return (t+'000000').slice(0,6)}
+const timeKey=v=>{const t=txt(v).replace(/:/g,'');return t?(t+'000000').slice(0,6):''}
 const seconds=v=>{const t=timeKey(v);return /^\d{6}$/.test(t)?Number(t.slice(0,2))*3600+Number(t.slice(2,4))*60+Number(t.slice(4,6)):null}
 const mode=r=>upper(r.SUBMODE||r.MODE)
 const num=v=>{const n=Number(v);return Number.isFinite(n)?n:null}
