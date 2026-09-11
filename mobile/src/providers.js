@@ -8,7 +8,7 @@ async function request(options){
   if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
   return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{}}
 }
-async function get(url,params={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:'')})}
+async function get(url,params={},headers={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:''),headers})}
 async function postForm(url,data,headers={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data)})}
 function parsedQuery(text){const p=new URLSearchParams(text);return Object.fromEntries([...p.entries()].map(([k,v])=>[k.toUpperCase(),v]))}
 function cleanHtml(text){return String(text||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim()}
@@ -53,7 +53,7 @@ export async function fetchWRL(c){
     const params={limit:100}
     if(cursor)params.cursor=cursor
     if(c.logbook_id)params.logbookId=c.logbook_id
-    const r=await get('https://api.worldradioleague.com/v1/contacts',params)
+    const r=await get('https://api.worldradioleague.com/v1/contacts',params,{Authorization:'Bearer '+c.api_key,'User-Agent':'PU2BRU-QSO-Manager/8.0'})
     let payload
     try{payload=JSON.parse(r.text)}catch{throw new Error('WRL retornou resposta inválida')}
     if(payload.error)throw new Error(payload.error.message||'Erro WRL')
