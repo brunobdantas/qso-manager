@@ -96,7 +96,11 @@ export default function App(){
    try{
      const next={...datasets}, map={QRZ:fetchQRZ,WRL:fetchWRL,CLUBLOG:fetchClubLog,EQSL:fetchEQSL,EQSL_INBOX:fetchEQSLInbox,LOTW:fetchLoTW}
      const cred=p==='EQSL_INBOX'?connections.EQSL:connections[p]
-     await persist(p,await map[p](cred),next);setDatasets(next);setMessage(LABELS[p]+' atualizado.')
+     const result=await map[p](cred)
+     await persist(p,result,next);setDatasets(next)
+     const total=result.records?.length||0
+     const remote=result.metadata?.remoteStatusCount
+     setMessage(LABELS[p]+' atualizado: '+fmt(total)+' registro(s)'+(remote!=null?' · remoto: '+fmt(remote):'')+'.')
    }catch(e){setMessage('Erro: '+e.message)}finally{setProgress('');setSyncing(false)}
  }
  async function importHrd(file){
