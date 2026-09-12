@@ -76,3 +76,18 @@ export async function clearProviderCredentials(provider){
   await saveConnections(all)
   return all
 }
+
+
+const ACTIVITY_KEY='activity_v9'
+export async function appendActivity(kind,summary,details={},status='OK'){
+  const current=await loadDataset(ACTIVITY_KEY)
+  const rows=Array.isArray(current?.records)?current.records:[]
+  const item={id:Date.now()+'-'+Math.random().toString(16).slice(2),timestamp:new Date().toISOString(),kind,status,summary,details}
+  const next=[item,...rows].slice(0,1000)
+  await saveDataset(ACTIVITY_KEY,{records:next,updatedAt:new Date().toISOString(),metadata:{kind:'activity'}})
+  return item
+}
+export async function loadActivity(){
+  const value=await loadDataset(ACTIVITY_KEY)
+  return Array.isArray(value?.records)?value.records:[]
+}

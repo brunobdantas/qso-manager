@@ -30,7 +30,7 @@ async function qrzPost(c,action,option){
   if(!key)throw new Error('QRZ Logbook API Key não configurada')
   const payload={KEY:key,ACTION:String(action||'').toUpperCase()}
   if(option)payload.OPTION=option
-  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/8.0.1 (PU2BRU)'})
+  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/9.0 (PU2BRU)'})
   const data=parsedQuery(r.text)
   qrzError(data,payload.ACTION)
   return data
@@ -145,7 +145,7 @@ export async function fetchWRL(c){
     const params={limit:100}
     if(cursor)params.cursor=cursor
     if(c.logbook_id)params.logbookId=c.logbook_id
-    const r=await get('https://api.worldradioleague.com/v1/contacts',params,{Authorization:'Bearer '+c.api_key,'User-Agent':'PU2BRU-QSO-Manager/8.0'})
+    const r=await get('https://api.worldradioleague.com/v1/contacts',params,{Authorization:'Bearer '+c.api_key,'User-Agent':'PU2BRU-QSO-Manager/9.0'})
     let payload
     try{payload=JSON.parse(r.text)}catch{throw new Error('WRL retornou resposta inválida')}
     if(payload.error)throw new Error(payload.error.message||'Erro WRL')
@@ -206,12 +206,119 @@ export async function fetchLoTW(c){
 
 export async function pushHRDLog(c,record){
   if(!c?.callsign||!c?.upload_code)throw new Error('HRDLog requer Indicativo + Upload Code')
-  const r=await postForm('https://robot.hrdlog.net/NewEntry.aspx',{Code:c.upload_code,Callsign:c.callsign,ADIFData:recordToAdif(record)},{'User-Agent':'PU2BRU-QSO-Manager/8.0'})
+  const r=await postForm('https://robot.hrdlog.net/NewEntry.aspx',{Code:c.upload_code,Callsign:c.callsign,ADIFData:recordToAdif(record)},{'User-Agent':'PU2BRU-QSO-Manager/9.0'})
   const low=r.text.toLowerCase()
   if(low.includes('<insert>1'))return {ok:true,status:'inserted'}
   if(low.includes('<insert>0'))return {ok:true,status:'duplicate'}
   if(low.includes('unknown user</error>')||low.includes('invalid token</error>'))throw new Error('HRDLog recusou Indicativo/Upload Code')
   throw new Error(cleanHtml(r.text).slice(0,220)||'HRDLog não confirmou a inclusão')
+}
+
+
+export const REMOTE_CAPABILITIES={
+  QRZ:{read:true,add:true,update:false,delete:false},
+  WRL:{read:true,add:true,update:true,delete:true},
+  CLUBLOG:{read:true,add:true,update:false,delete:true},
+  EQSL:{read:true,add:true,update:false,delete:false},
+  LOTW:{read:true,add:false,update:false,delete:false},
+  HRDLOG:{read:false,add:true,update:false,delete:false},
+  HRD:{read:true,add:false,update:false,delete:false},
+}
+
+function requireIdentity(record){
+  const call=String(record?.CALL||'').trim().toUpperCase()
+  const date=String(record?.QSO_DATE||'').replace(/[-/]/g,'')
+  const time=String(record?.TIME_ON||'').replace(/:/g,'')
+  if(!call||date.length!==8||time.length<4)throw new Error('QSO sem identidade completa (CALL, QSO_DATE, TIME_ON)')
+  return {call,date,time:(time+'000000').slice(0,6)}
+}
+function wrlPayload(record){
+  const id=requireIdentity(record)
+  const freq=Number(record.FREQ),band=String(record.BAND||''),mode=String(record.SUBMODE||record.MODE||'')
+  if(!Number.isFinite(freq)||!band||!mode)throw new Error('WRL requer FREQ, BAND e MODE')
+  const payload={programId:'PU2BRU-QSO-Manager',call:id.call,timestamp:{qsoDate:id.date,timeOn:id.time},freq,band,mode}
+  const map={RST_SENT:'rstSent',RST_RCVD:'rstRcvd',COMMENT:'notes',STATION_CALLSIGN:'stationCallsign',MY_GRIDSQUARE:'myGridsquare',NAME:'name',GRIDSQUARE:'gridsquare',QTH:'qth',STATE:'state',OPERATOR:'operator'}
+  for(const [src,dst] of Object.entries(map))if(record[src]!=null&&record[src]!=='')payload[dst]=String(record[src])
+  return payload
+}
+function wrlHeaders(c){if(!c?.api_key)throw new Error('WRL Developer API Key não configurada');return {Authorization:'Bearer '+c.api_key,'Content-Type':'application/json','User-Agent':'PU2BRU-QSO-Manager/9.0'}}
+async function jsonRequest(method,url,headers,data){
+  const r=await CapacitorHttp.request({method,url,headers,data,responseType:'json'})
+  const payload=typeof r.data==='string'?(()=>{try{return JSON.parse(r.data)}catch{return {error:{message:r.data}}}})():r.data
+  if(r.status<200||r.status>=300||payload?.error)throw new Error(payload?.error?.message||payload?.message||('HTTP '+r.status))
+  return payload
+}
+async function qrzInsert(c,record){
+  const key=normalizeQRZKey(c?.api_key);if(!key)throw new Error('QRZ Logbook API Key não configurada')
+  const r=await postForm('https://logbook.qrz.com/api',{KEY:key,ACTION:'INSERT',ADIF:recordToAdif(record)},{'User-Agent':'PU2BRU-QSO-Manager/9.0 (PU2BRU)'})
+  const data=parsedQuery(r.text);qrzError(data,'INSERT')
+  if(String(data.RESULT||'').toUpperCase()!=='OK')throw new Error(data.REASON||'QRZ não confirmou a inclusão')
+  return {ok:true,externalId:data.LOGID||null}
+}
+async function wrlInsert(c,record){
+  const payload=wrlPayload(record)
+  if(c.logbook_id)payload.logbookId=c.logbook_id
+  const out=await jsonRequest('POST','https://api.worldradioleague.com/v1/contacts',wrlHeaders(c),payload)
+  return {ok:true,externalId:out?.data?.id||null}
+}
+async function wrlUpdate(c,record,changes){
+  const id=record?.APP_WRL_ID
+  if(!id)throw new Error('QSO do WRL sem ID remoto')
+  const map={CALL:'call',FREQ:'freq',BAND:'band',MODE:'mode',SUBMODE:'mode',RST_SENT:'rstSent',RST_RCVD:'rstRcvd',COMMENT:'notes',STATION_CALLSIGN:'stationCallsign',MY_GRIDSQUARE:'myGridsquare',NAME:'name',GRIDSQUARE:'gridsquare',QTH:'qth',STATE:'state',OPERATOR:'operator'}
+  const payload={}
+  for(const [k,v] of Object.entries(changes||{}))if(map[k]&&v!==''&&v!=null)payload[map[k]]=k==='FREQ'?Number(v):v
+  if(!Object.keys(payload).length)throw new Error('Nenhum campo editável informado')
+  await jsonRequest('PATCH','https://api.worldradioleague.com/v1/contacts/'+encodeURIComponent(id),wrlHeaders(c),payload)
+  return {ok:true}
+}
+async function wrlDelete(c,record){
+  const id=record?.APP_WRL_ID;if(!id)throw new Error('QSO do WRL sem ID remoto')
+  await jsonRequest('DELETE','https://api.worldradioleague.com/v1/contacts/'+encodeURIComponent(id),wrlHeaders(c))
+  return {ok:true}
+}
+async function clubLogInsert(c,record){
+  if(!c?.email||!c?.app_password||!c?.callsign||!c?.api_key)throw new Error('Club Log requer e-mail, Application Password, indicativo e API Key para escrita')
+  const r=await postForm('https://clublog.org/realtime.php',{email:c.email,password:c.app_password,callsign:c.callsign,adif:recordToAdif(record),api:c.api_key})
+  if(/error|failed/i.test(r.text))throw new Error(cleanHtml(r.text).slice(0,220))
+  return {ok:true}
+}
+function clubBand(band){const t=String(band||'').toLowerCase().trim();if(t==='70cm')return'70';if(t==='23cm')return'23';if(t==='13cm')return'13';if(t.endsWith('m'))return t.slice(0,-1);throw new Error('Banda não suportada pelo delete do Club Log: '+band)}
+async function clubLogDelete(c,record){
+  if(!c?.email||!c?.app_password||!c?.callsign||!c?.api_key)throw new Error('Club Log requer credenciais completas e API Key para exclusão')
+  const id=requireIdentity(record)
+  const stamp=id.date.slice(0,4)+'-'+id.date.slice(4,6)+'-'+id.date.slice(6,8)+' '+id.time.slice(0,2)+':'+id.time.slice(2,4)+':'+id.time.slice(4,6)
+  const r=await postForm('https://clublog.org/delete.php',{email:c.email,password:c.app_password,callsign:c.callsign,dxcall:id.call,datetime:stamp,bandid:clubBand(record.BAND),api:c.api_key})
+  if(/not deleted|error|failed/i.test(r.text))throw new Error(cleanHtml(r.text).slice(0,220))
+  return {ok:true}
+}
+async function eqslInsert(c,record){
+  if(!c?.username||!c?.password)throw new Error('eQSL não configurado')
+  const payload={...record,EQSL_USER:c.username,EQSL_PSWD:c.password}
+  if(c.qth_nickname)payload.APP_EQSL_QTH_NICKNAME=c.qth_nickname
+  const r=await postForm('https://www.eqsl.cc/qslcard/ImportADIF.cfm',{ADIFData:recordToAdif(payload)})
+  const clean=cleanHtml(r.text);if(/0 out of|error/i.test(clean))throw new Error(clean.slice(0,300))
+  return {ok:true}
+}
+
+export async function addRemote(provider,c,record){
+  const p=String(provider||'').toUpperCase()
+  if(p==='QRZ')return qrzInsert(c,record)
+  if(p==='WRL')return wrlInsert(c,record)
+  if(p==='CLUBLOG')return clubLogInsert(c,record)
+  if(p==='EQSL')return eqslInsert(c,record)
+  if(p==='HRDLOG')return pushHRDLog(c,record)
+  throw new Error(p+' não oferece inclusão remota')
+}
+export async function updateRemote(provider,c,record,changes){
+  const p=String(provider||'').toUpperCase()
+  if(p==='WRL')return wrlUpdate(c,record,changes)
+  throw new Error(p+' não oferece edição remota segura')
+}
+export async function deleteRemote(provider,c,record){
+  const p=String(provider||'').toUpperCase()
+  if(p==='WRL')return wrlDelete(c,record)
+  if(p==='CLUBLOG')return clubLogDelete(c,record)
+  throw new Error(p+' não oferece exclusão remota segura')
 }
 
 export async function testProvider(provider,c){

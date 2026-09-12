@@ -95,7 +95,7 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
                 response = self.client.post(
                     self.endpoint,
                     data=form,
-                    headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.5 (PU2BRU)"},
+                    headers={"User-Agent": "PU2BRU-QSO-Manager/9.0 (PU2BRU)"},
                     timeout=180.0 if action == "FETCH" else 60.0,
                 )
                 if response.status_code not in self.RETRYABLE_STATUS_CODES:

@@ -101,13 +101,14 @@ def test_v8_qsl_analysis_uses_online_confirmation_snapshots(tmp_path: Path):
     assert proposal["changes"]["LOTW_QSLRDATE"] == "2026-09-10"
 
 
-def test_mobile_policy_excludes_local_hrd(tmp_path: Path):
+def test_mobile_policy_includes_hrd_adif_source_in_v9(tmp_path: Path):
     service = V8OnlineService(
         credentials=CredentialStore(root=tmp_path),
         snapshots=CloudSnapshotStore(root=tmp_path),
     )
     status = service.status()
-    assert status["mobile_policy"] == "online_only"
-    assert status["hrd_local_in_mobile"] is False
-    assert "HRD" not in [p["provider"] for p in status["providers"]]
-    assert "HRDLOG" in [p["provider"] for p in status["providers"]]
+    assert status["mobile_policy"] == "unified_cross_platform"
+    assert status["hrd_local_in_mobile"] is True
+    providers = [p["provider"] for p in status["providers"]]
+    assert "HRD" in providers
+    assert "HRDLOG" in providers

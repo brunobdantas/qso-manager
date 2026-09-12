@@ -200,6 +200,10 @@ class QSOManagerBulkJobManager:
             if modified_providers:
                 cls._set(job_id, phase="resync", progress=90, message="Atualizando snapshots das plataformas alteradas…")
                 for provider in sorted(modified_providers):
+                    # HRDLog writes update the managed snapshot at publish time
+                    # because the service has no supported full-log read API.
+                    if provider == "HRDLOG":
+                        continue
                     if hub.credentials.configured(provider):
                         try:
                             hub.sync(provider)

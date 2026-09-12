@@ -126,7 +126,7 @@ class QRZCloudAdapter(CloudLogAdapter):
         response = self.client.post(
             self.endpoint,
             data=data,
-            headers={"User-Agent": "PU2BRU-QSO-Manager/5.0 (PU2BRU)"},
+            headers={"User-Agent": "PU2BRU-QSO-Manager/9.0 (PU2BRU)"},
         )
         response.raise_for_status()
         parsed = {k.upper(): values[-1] for k, values in parse_qs(response.text, keep_blank_values=True).items()}
@@ -205,7 +205,7 @@ class WRLCloudAdapter(CloudLogAdapter):
         key = str(self.credentials.get("api_key") or "").strip()
         if not key:
             raise CloudProviderError("WRL Developer API Key is required")
-        return {"Authorization": f"Bearer {key}", "User-Agent": "PU2BRU-QSO-Manager/5.0"}
+        return {"Authorization": f"Bearer {key}", "User-Agent": "PU2BRU-QSO-Manager/9.0"}
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Dict[str, Any]:
         response = self.client.request(method, self.base_url + path, headers=self._headers(), **kwargs)

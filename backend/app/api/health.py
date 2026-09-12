@@ -24,7 +24,7 @@ def health_check(db: Session = Depends(get_db)):
     
     return HealthResponse(
         status="healthy",
-        version="1.0.0",
+        version="9.0.0",
         database=db_status,
         qrz_enabled=settings.qrz_enabled,
         environment=settings.environment,

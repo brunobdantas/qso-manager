@@ -1,7 +1,10 @@
 import test from 'node:test'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { parseAdif, recordToAdif, matchRecords, consolidate, buildQsl, hrdlogPlan } from '../src/core.js'
-import { normalizeQRZKey, qrzStatusCount } from '../src/providers.js'
+import { normalizeQRZKey, qrzStatusCount, REMOTE_CAPABILITIES } from '../src/providers.js'
 
 const q=(call,date,time,extra={})=>({CALL:call,QSO_DATE:date,TIME_ON:time,BAND:'20M',MODE:'FT8',FREQ:'14.074',...extra})
 
@@ -62,4 +65,37 @@ test('QRZ STATUS count is extracted from all supported response shapes',()=>{
   assert.equal(qrzStatusCount({COUNT:'5284'}),5284)
   assert.equal(qrzStatusCount({DATA:'QSOS=5284'}),5284)
   assert.equal(qrzStatusCount({DATA:'Total QSOs: 5284'}),5284)
+})
+
+
+test('v9 provider capability matrix keeps safe write boundaries',()=>{
+  assert.equal(REMOTE_CAPABILITIES.QRZ.add,true)
+  assert.equal(REMOTE_CAPABILITIES.QRZ.update,false)
+  assert.equal(REMOTE_CAPABILITIES.WRL.update,true)
+  assert.equal(REMOTE_CAPABILITIES.CLUBLOG.delete,true)
+  assert.equal(REMOTE_CAPABILITIES.HRDLOG.add,true)
+  assert.equal(REMOTE_CAPABILITIES.HRD.read,true)
+  assert.equal(REMOTE_CAPABILITIES.HRD.add,false)
+})
+
+test('HRD ADIF participates as an equal comparison source',()=>{
+  const datasets={
+    QRZ:{records:[q('K1ABC','20260912','010203')]},
+    HRD:{records:[q('K1ABC','20260912','010203')]},
+    WRL:{records:[]},CLUBLOG:{records:[]},EQSL:{records:[]},HRDLOG:{records:[]},
+  }
+  const rows=consolidate(datasets,['QRZ','WRL','CLUBLOG','EQSL','HRDLOG','HRD'])
+  assert.equal(rows.length,1)
+  assert.deepEqual(rows[0].providers,['QRZ','HRD'])
+})
+
+
+test('mobile matcher follows shared v9 contract vectors',()=>{
+  const here=path.dirname(fileURLToPath(import.meta.url))
+  const vectors=JSON.parse(fs.readFileSync(path.resolve(here,'../../test_vectors/qso_matching_v9.json'),'utf8'))
+  for(const item of vectors.cases){
+    const result=matchRecords([item.left],[item.right],'LEFT','RIGHT')
+    const actual=result.matches.length?'auto':result.reviews.length?'review':'none'
+    assert.equal(actual,item.expected,item.name)
+  }
 })

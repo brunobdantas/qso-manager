@@ -65,7 +65,7 @@ function sourceSeed(name) {
   return { id: uid(), name, file: null, coverage: 'FULL_EXPORT' }
 }
 
-function AdvancedCompare() {
+export function AdvancedCompare() {
   const [sources, setSources] = useState([sourceSeed('QRZ'), sourceSeed('WRL')])
   const [referenceId, setReferenceId] = useState(() => null)
   const [result, setResult] = useState(null)
@@ -146,7 +146,7 @@ function evidenceSeed(kind, name) {
   return { id: uid(), kind, name, file: null, assumeReceived: true }
 }
 
-function QSLHub() {
+export function QSLHub() {
   const [reference, setReference] = useState({ name: 'QRZ', file: null })
   const [evidence, setEvidence] = useState([evidenceSeed('EQSL', 'EQSL_INBOX'), evidenceSeed('LOTW', 'LOTW_REPORT')])
   const [result, setResult] = useState(null)
