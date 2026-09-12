@@ -23,9 +23,9 @@ PROVIDERS["HRDLOG"] = HRDLogCloudAdapter
 
 
 class V8OnlineService:
-    LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG")
+    LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
     SYNC_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW")
-    DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG")
+    DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD")
 
     LABELS = {
         "QRZ": "QRZ",
@@ -35,6 +35,7 @@ class V8OnlineService:
         "EQSL_INBOX": "eQSL Inbox",
         "LOTW": "LoTW",
         "HRDLOG": "HRDLog.net",
+        "HRD": "Ham Radio Deluxe",
     }
 
     NOTES = {
@@ -45,6 +46,7 @@ class V8OnlineService:
         "EQSL_INBOX": "Inbox online: evidências de eQSLs recebidos.",
         "LOTW": "Confirmações recebidas consultadas online no relatório oficial LoTW.",
         "HRDLOG": "Bootstrap por ADIF + inserções online. Alterações feitas diretamente no site exigem nova reconciliação ADIF.",
+        "HRD": "Fonte local por ADIF. Pode ser importada e comparada igualmente no Windows e no Android.",
     }
 
     def __init__(
@@ -68,11 +70,15 @@ class V8OnlineService:
     def _credentials_for(self, provider: str) -> Dict[str, Any]:
         if provider == "EQSL_INBOX":
             return self.credentials.get("EQSL")
+        if provider == "HRD":
+            return {}
         return self.credentials.get(provider)
 
     def _configured(self, provider: str) -> bool:
         if provider == "EQSL_INBOX":
             return self.credentials.configured("EQSL")
+        if provider == "HRD":
+            return bool(self.snapshots.summary("HRD").get("records"))
         return self.credentials.configured(provider)
 
     def _capabilities(self, provider: str) -> Dict[str, bool]:
@@ -82,6 +88,8 @@ class V8OnlineService:
             return dict(EQSLInboxAdapter.capabilities)
         if provider == "HRDLOG":
             return dict(HRDLogCloudAdapter.capabilities)
+        if provider == "HRD":
+            return {"read": True, "add": False, "update": False, "delete": False}
         adapter = PROVIDERS.get(provider)
         return dict(adapter.capabilities) if adapter else {"read": False, "add": False, "update": False, "delete": False}
 
@@ -102,6 +110,7 @@ class V8OnlineService:
                 "note": self.NOTES[provider],
                 "source_kind": (
                     "hybrid_bootstrap_upload" if provider == "HRDLOG"
+                    else "local_adif" if provider == "HRD"
                     else "confirmation_api" if provider in {"EQSL_INBOX", "LOTW"}
                     else "remote_api"
                 ),
@@ -123,6 +132,8 @@ class V8OnlineService:
 
     def configure(self, provider: str, values: Dict[str, Any]) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
+        if provider == "HRD":
+            raise CloudProviderError("HRD é uma fonte ADIF local e não usa credenciais")
         if provider == "EQSL_INBOX":
             provider = "EQSL"
         clean = {k: v.strip() if isinstance(v, str) else v for k, v in values.items() if v not in (None, "")}
@@ -138,11 +149,17 @@ class V8OnlineService:
 
     def disconnect(self, provider: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
+        if provider == "HRD":
+            self.snapshots.clear("HRD")
+            QSOManagerWorkspace.invalidate_cache()
+            return {"ok": True, "provider": "HRD"}
         target = "EQSL" if provider == "EQSL_INBOX" else provider
         self.credentials.delete(target)
         return {"ok": True, "provider": target}
 
     def _adapter(self, provider: str):
+        if provider == "HRD":
+            raise CloudProviderError("HRD é uma fonte ADIF local; importe um arquivo em vez de sincronizar")
         creds = self._credentials_for(provider)
         if not creds:
             raise CloudProviderError(f"{self.LABELS[provider]} is not configured")
@@ -163,6 +180,8 @@ class V8OnlineService:
 
     def sync(self, provider: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
+        if provider == "HRD":
+            raise CloudProviderError("HRD é uma fonte ADIF local; importe um arquivo em vez de sincronizar")
         if provider == "HRDLOG":
             raise CloudProviderError("HRDLog uses ADIF bootstrap + realtime inserts; it has no supported full-log read sync")
         with self._adapter(provider) as adapter:
@@ -186,20 +205,24 @@ class V8OnlineService:
                 results.append({"provider": provider, "ok": False, "error": str(exc)})
         return {"results": results, "dashboard": self.dashboard()}
 
-    def import_hrdlog_adif(self, content: str, filename: str = "hrdlog.adi") -> Dict[str, Any]:
+    def import_source_adif(self, provider: str, content: str, filename: str = "source.adi") -> Dict[str, Any]:
+        provider = self._normalize_provider(provider)
+        if provider not in {"HRD", "HRDLOG"}:
+            raise CloudProviderError(f"{provider} deve ser atualizado por sua conexão online")
         if not str(content or "").strip():
-            raise CloudProviderError("O ADIF do HRDLog está vazio")
+            raise CloudProviderError("O ADIF está vazio")
         records, errors = ADIFParser().parse(content)
         if not records:
-            raise CloudProviderError("Nenhum QSO válido foi encontrado no ADIF do HRDLog")
-        backup = self.snapshots.backup("HRDLOG")
-        summary = self.snapshots.save("HRDLOG", records, {
-            "source": "hrdlog_bootstrap_adif",
+            raise CloudProviderError("Nenhum QSO válido foi encontrado no ADIF")
+        backup = self.snapshots.backup(provider)
+        metadata = {
+            "source": "hrdlog_bootstrap_adif" if provider == "HRDLOG" else "local_adif",
             "coverage": "FULL_EXPORT",
-            "filename": (filename or "hrdlog.adi")[:255],
+            "filename": (filename or "source.adi")[:255],
             "parse_errors": errors[:20],
-            "managed_after_bootstrap": True,
-        })
+            "managed_after_bootstrap": provider == "HRDLOG",
+        }
+        summary = self.snapshots.save(provider, records, metadata)
         QSOManagerWorkspace.invalidate_cache()
         return {
             "ok": True,
@@ -207,6 +230,9 @@ class V8OnlineService:
             "backup": str(backup) if backup else None,
             "parse_errors": errors[:20],
         }
+
+    def import_hrdlog_adif(self, content: str, filename: str = "hrdlog.adi") -> Dict[str, Any]:
+        return self.import_source_adif("HRDLOG", content, filename)
 
     def hrdlog_plan(self, limit: int = 5000) -> Dict[str, Any]:
         qrz_records = self.snapshots.load("QRZ").get("records") or []
