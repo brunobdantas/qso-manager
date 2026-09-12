@@ -13,7 +13,8 @@ from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
-from ..adapters.cloud_logs import PROVIDERS, records_to_adif
+from ..adapters.cloud_logs import records_to_adif
+from ..adapters.provider_registry import PROVIDER_ADAPTERS
 from .cloud_hub_fast_service import CloudHubService
 from .fast_adif_comparison_service import FastADIFComparisonService
 
@@ -98,7 +99,7 @@ class QSOManagerWorkspace:
 
     @staticmethod
     def _capabilities(provider: str) -> Dict[str, bool]:
-        adapter = PROVIDERS.get(provider)
+        adapter = PROVIDER_ADAPTERS.get(provider)
         return dict(adapter.capabilities) if adapter else dict(CloudHubService.LOCAL_CAPABILITIES)
 
     def _confirmation_sources(self, refs: Dict[str, int], snapshots: Dict[str, List[Dict[str, Any]]]) -> List[str]:
