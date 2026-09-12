@@ -97,8 +97,11 @@ jobs:
         env:
           QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-self-test
         run: |
-          $process = Start-Process -FilePath ".\dist\PU2BRU-QSO-Manager\PU2BRU-QSO-Manager.exe" -ArgumentList "--self-test" -Wait -PassThru
+          $exe = ".\dist\PU2BRU-QSO-Manager\PU2BRU-QSO-Manager.exe"
+          $process = Start-Process -FilePath $exe -ArgumentList "--self-test" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Packaged self-test failed with exit code $($process.ExitCode)" }
+          $smoke = Start-Process -FilePath $exe -ArgumentList "--smoke-start" -Wait -PassThru
+          if ($smoke.ExitCode -ne 0) { throw "Packaged real-start smoke test failed with exit code $($smoke.ExitCode)" }
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
           if (-not (Test-Path $db)) { throw "Packaged database was not created in persistent data directory" }
 
@@ -138,6 +141,8 @@ jobs:
           if (-not (Test-Path $installedRuntime)) { throw "Installed vcruntime140.dll not found" }
           $process = Start-Process -FilePath $installedExe -ArgumentList "--self-test" -Wait -PassThru
           if ($process.ExitCode -ne 0) { throw "Installed app self-test failed with exit code $($process.ExitCode)" }
+          $smoke = Start-Process -FilePath $installedExe -ArgumentList "--smoke-start" -Wait -PassThru
+          if ($smoke.ExitCode -ne 0) { throw "Installed real-start smoke test failed with exit code $($smoke.ExitCode)" }
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
           if (-not (Test-Path $db)) { throw "Installed app did not create its database" }
 
