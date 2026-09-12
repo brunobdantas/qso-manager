@@ -3,7 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, adapter_for, records_to_adif
+from ..adapters.cloud_logs import CloudProviderError, records_to_adif
+from ..adapters.provider_registry import PROVIDER_ADAPTERS, adapter_for_provider
 from ..adif.parser import ADIFParser
 from .adif_comparison_service import ADIFComparisonService
 from .cloud_snapshot_store import CloudSnapshotStore
@@ -39,7 +40,7 @@ class CloudHubService:
                 "label": self.PROVIDER_LABELS[provider],
                 "configured": bool(snapshot["records"]) if is_local else bool(cred),
                 "credentials": self.credentials.masked(cred),
-                "capabilities": dict(self.LOCAL_CAPABILITIES if is_local else PROVIDERS[provider].capabilities),
+                "capabilities": dict(self.LOCAL_CAPABILITIES if is_local else PROVIDER_ADAPTERS[provider].capabilities),
                 "snapshot": snapshot,
                 "note": self.PROVIDER_NOTES[provider],
                 "truth_priority": 1 if provider == "QRZ" else 2,
@@ -72,7 +73,7 @@ class CloudHubService:
 
     def test(self, provider: str) -> Dict[str, Any]:
         provider = self._provider(provider)
-        with adapter_for(provider, self._credentials(provider)) as adapter:
+        with adapter_for_provider(provider, self._credentials(provider)) as adapter:
             result = adapter.test_connection()
         return {"provider": provider, **result}
 
