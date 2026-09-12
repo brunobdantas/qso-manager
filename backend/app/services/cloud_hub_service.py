@@ -58,7 +58,7 @@ class CloudHubService:
         provider = self._provider(provider)
         clean = {k: v.strip() if isinstance(v, str) else v for k, v in values.items() if v not in (None, "")}
         existing = self.credentials.get(provider)
-        secret_fields = {"api_key", "password", "app_password", "key"}
+        secret_fields = {"api_key", "password", "app_password", "key", "upload_code", "code"}
         for field in secret_fields:
             if field not in clean and field in existing:
                 clean[field] = existing[field]
