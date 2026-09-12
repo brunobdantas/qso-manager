@@ -19,7 +19,7 @@ const FIELDS={
 const fmt=n=>Number(n||0).toLocaleString('pt-BR')
 const when=v=>v?new Date(v).toLocaleString('pt-BR',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}):'Nunca'
 const sleep=ms=>new Promise(r=>setTimeout(r,ms))
-function configured(p,c){if(p==='EQSL_INBOX')p='EQSL';if(p==='HRD')return true;const x=c[p]||{};if(p==='QRZ'||p==='WRL')return!!x.api_key;if(p==='CLUBLOG')return!!(x.email&&x.app_password&&x.callsign);if(p==='EQSL')return!!(x.username&&x.password);if(p==='LOTW')return!!(x.login&&x.password);if(p==='HRDLOG')return!!(x.callsign&&x.upload_code);return false}
+function configured(p,c){if(p==='EQSL_INBOX')p='EQSL';if(p==='HRD')return false;const x=c[p]||{};if(p==='QRZ'||p==='WRL')return!!x.api_key;if(p==='CLUBLOG')return!!(x.email&&x.app_password&&x.callsign);if(p==='EQSL')return!!(x.username&&x.password);if(p==='LOTW')return!!(x.login&&x.password);if(p==='HRDLOG')return!!(x.callsign&&x.upload_code);return false}
 function Badge({children,tone=''}){return <span className={'m9-badge '+tone}>{children}</span>}
 function Btn({children,kind='',small=false,...props}){return <button className={'m9-btn '+kind+(small?' small':'')} {...props}>{children}</button>}
 function Empty({children}){return <div className="m9-empty">{children||'Nada para mostrar.'}</div>}
@@ -30,15 +30,16 @@ function SourceSheet({provider,connections,onClose,onSaved}){
  return <div className="m9-sheet-bg" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="m9-sheet"><div className="m9-grabber"/><header><div><small>CONEXÃO</small><h2>{LABELS[provider]}</h2></div><button onClick={onClose}>×</button></header>{provider==='EQSL_INBOX'&&<p className="m9-hint">O Inbox usa a mesma conta do eQSL OutBox.</p>}<div className="m9-fields">{(FIELDS[key]||[]).map(f=><label key={f[0]}><span>{f[1]}</span><input type={f[2]} value={values[f[0]]||''} onChange={e=>setValues({...values,[f[0]]:e.target.value})}/></label>)}</div>{msg&&<div className={'m9-message '+(msg.startsWith('Erro')?'error':'')}>{msg}</div>}<div className="m9-sheet-actions"><Btn kind="ghost" disabled={busy} onClick={()=>save(true)}>Testar</Btn><Btn disabled={busy} onClick={()=>save(false)}>Salvar</Btn></div></section></div>
 }
 function ActionSheet({rows,selected,datasets,connections,onClose,onDone}){
- const chosen=rows.filter(x=>selected.has(x.id)),[mode,setMode]=useState('publish'),[target,setTarget]=useState('WRL'),[source,setSource]=useState('WRL'),[busy,setBusy]=useState(false),[msg,setMsg]=useState(''),[changes,setChanges]=useState({})
+ const chosen=rows.filter(x=>selected.has(x.id))
  const addTargets=Object.entries(REMOTE_CAPABILITIES).filter(([p,c])=>c.add&&configured(p,connections)).map(x=>x[0]),deleteSources=Object.entries(REMOTE_CAPABILITIES).filter(([p,c])=>c.delete&&configured(p,connections)).map(x=>x[0])
+ const [mode,setMode]=useState('publish'),[target,setTarget]=useState(addTargets[0]||'QRZ'),[source,setSource]=useState(deleteSources[0]||'WRL'),[busy,setBusy]=useState(false),[msg,setMsg]=useState(''),[changes,setChanges]=useState({})
  async function execute(){
   setBusy(true);setMsg('');let ok=0,fail=0,hrdAdded=[]
   try{
    if(mode==='export'){await shareText('qso-manager-selecao.adi',chosen.map(x=>recordToAdif(x.canonical)).join('\n'),'text/plain');ok=chosen.length}
    else for(const q of chosen){
     try{
-     if(mode==='publish'){await addRemote(target,connections[target],q.canonical);if(target==='HRDLOG')hrdAdded.push(q.canonical)}
+     if(mode==='publish'){if(q.refs[target]!=null)continue;await addRemote(target,connections[target],q.canonical);if(target==='HRDLOG')hrdAdded.push(q.canonical)}
      if(mode==='delete'){const idx=q.refs[source];if(idx==null)throw new Error('QSO não existe em '+source);await deleteRemote(source,connections[source],datasets[source].records[idx])}
      if(mode==='update'){const idx=q.refs.WRL;if(idx==null)throw new Error('QSO não existe no WRL');await updateRemote('WRL',connections.WRL,datasets.WRL.records[idx],changes)}
      ok++
