@@ -1,4 +1,7 @@
 import test from 'node:test'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import { parseAdif, recordToAdif, matchRecords, consolidate, buildQsl, hrdlogPlan } from '../src/core.js'
 import { normalizeQRZKey, qrzStatusCount, REMOTE_CAPABILITIES } from '../src/providers.js'
@@ -84,4 +87,15 @@ test('HRD ADIF participates as an equal comparison source',()=>{
   const rows=consolidate(datasets,['QRZ','WRL','CLUBLOG','EQSL','HRDLOG','HRD'])
   assert.equal(rows.length,1)
   assert.deepEqual(rows[0].providers,['QRZ','HRD'])
+})
+
+
+test('mobile matcher follows shared v9 contract vectors',()=>{
+  const here=path.dirname(fileURLToPath(import.meta.url))
+  const vectors=JSON.parse(fs.readFileSync(path.resolve(here,'../../test_vectors/qso_matching_v9.json'),'utf8'))
+  for(const item of vectors.cases){
+    const result=matchRecords([item.left],[item.right],'LEFT','RIGHT')
+    const actual=result.matches.length?'auto':result.reviews.length?'review':'none'
+    assert.equal(actual,item.expected,item.name)
+  }
 })
