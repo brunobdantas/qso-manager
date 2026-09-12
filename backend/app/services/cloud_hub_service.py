@@ -12,14 +12,16 @@ from .credential_store import CredentialStore
 
 
 class CloudHubService:
-    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRD")
-    REMOTE_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL")
-    PROVIDER_LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL", "HRD": "Ham Radio Deluxe"}
+    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
+    REMOTE_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG")
+    SYNC_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL")
+    PROVIDER_LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL", "HRDLOG": "HRDLog.net", "HRD": "Ham Radio Deluxe"}
     PROVIDER_NOTES = {
         "QRZ": "Base preferencial. Leitura completa e inclusão segura; edição/exclusão remota ficam bloqueadas para proteger confirmações.",
         "WRL": "API oficial de leitura e escrita. Contatos possuem ID estável e podem ser incluídos, corrigidos e excluídos.",
         "CLUBLOG": "Download do log, inclusão em tempo real e exclusão por identidade exata. O export é minimalista e pode descartar campos do log original.",
         "EQSL": "OutBox em ADIF e inclusão por interface de logger. O download é uma representação normalizada; edição/exclusão remota não é exposta.",
+        "HRDLOG": "Bootstrap por ADIF e inclusão online por Upload Code. A leitura completa depende de reconciliação ADIF.",
         "HRD": "Snapshot local importado de um arquivo ADIF do Ham Radio Deluxe. É comparado com todas as fontes online e nunca altera o arquivo original.",
     }
     LOCAL_CAPABILITIES = {"read": True, "add": False, "update": False, "delete": False}
@@ -79,7 +81,7 @@ class CloudHubService:
 
     def sync(self, provider: str) -> Dict[str, Any]:
         provider = self._provider(provider)
-        with adapter_for(provider, self._credentials(provider)) as adapter:
+        with adapter_for_provider(provider, self._credentials(provider)) as adapter:
             result = adapter.fetch_all()
         records = result.get("records") or []
         metadata = result.get("metadata") or {}
@@ -89,7 +91,7 @@ class CloudHubService:
 
     def sync_all(self) -> Dict[str, Any]:
         results: List[Dict[str, Any]] = []
-        for provider in self.REMOTE_PROVIDERS:
+        for provider in self.SYNC_PROVIDERS:
             if not self.credentials.configured(provider):
                 results.append({"provider": provider, "ok": False, "skipped": True, "error": "not configured"})
                 continue
@@ -235,12 +237,12 @@ class CloudHubService:
         if source == target:
             raise CloudProviderError("Source and target must be different")
         if not confirm:
-            return {"dry_run": True, "source": source, "target": target, "qso": self.record(source, index), "capabilities": PROVIDERS[target].capabilities}
-        if target not in self.REMOTE_PROVIDERS or not PROVIDERS[target].capabilities.get("add"):
+            return {"dry_run": True, "source": source, "target": target, "qso": self.record(source, index), "capabilities": PROVIDER_ADAPTERS[target].capabilities}
+        if target not in self.REMOTE_PROVIDERS or not PROVIDER_ADAPTERS[target].capabilities.get("add"):
             raise CloudProviderError(f"{target} does not support add")
         row = self.record(source, index)["record"]
         backup = self.snapshots.backup(target)
-        with adapter_for(target, self._credentials(target)) as adapter:
+        with adapter_for_provider(target, self._credentials(target)) as adapter:
             result = adapter.add_qso(row)
             verification = None
             if target == "QRZ" and result.get("external_id") and hasattr(adapter, "fetch_logids"):
@@ -252,7 +254,7 @@ class CloudHubService:
     def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False) -> Dict[str, Any]:
         provider = self._provider(provider)
         item = self.record(provider, index)
-        if not PROVIDERS[provider].capabilities.get("update"):
+        if not PROVIDER_ADAPTERS[provider].capabilities.get("update"):
             raise CloudProviderError(f"{provider} remote update is intentionally unavailable")
         if not confirm:
             return {"dry_run": True, "provider": provider, "qso": item, "changes": changes}
@@ -260,19 +262,19 @@ class CloudHubService:
         if not external_id:
             raise CloudProviderError(f"{provider} record has no stable external id")
         backup = self.snapshots.backup(provider)
-        with adapter_for(provider, self._credentials(provider)) as adapter:
+        with adapter_for_provider(provider, self._credentials(provider)) as adapter:
             result = adapter.update_qso(external_id, changes)
         return {"ok": True, "backup": str(backup) if backup else None, "result": result, "needs_resync": True}
 
     def delete_remote(self, provider: str, index: int, confirm: bool = False) -> Dict[str, Any]:
         provider = self._provider(provider)
         item = self.record(provider, index)
-        if not PROVIDERS[provider].capabilities.get("delete"):
+        if not PROVIDER_ADAPTERS[provider].capabilities.get("delete"):
             raise CloudProviderError(f"{provider} remote delete is intentionally unavailable")
         if not confirm:
             return {"dry_run": True, "provider": provider, "qso": item}
         backup = self.snapshots.backup(provider)
-        with adapter_for(provider, self._credentials(provider)) as adapter:
+        with adapter_for_provider(provider, self._credentials(provider)) as adapter:
             result = adapter.delete_qso(item.get("external_id") or "", record=item["record"])
         return {"ok": True, "backup": str(backup) if backup else None, "result": result, "needs_resync": True}
 
