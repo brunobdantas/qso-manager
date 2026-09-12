@@ -7,8 +7,9 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, records_to_adif
+from ..adapters.cloud_logs import CloudProviderError, records_to_adif
 from ..adapters.online_v8 import EQSLInboxAdapter, HRDLogCloudAdapter, LoTWConfirmationAdapter
+from ..adapters.provider_registry import PROVIDER_ADAPTERS, adapter_for_provider
 from ..adif.parser import ADIFParser
 from .advanced_analysis_service import AdvancedAnalysisService
 from .cloud_hub_fast_service import CloudHubService
@@ -16,11 +17,6 @@ from .cloud_snapshot_store import CloudSnapshotStore
 from .credential_store import CredentialStore
 from .fast_adif_comparison_service import FastADIFComparisonService
 from .qso_manager_workspace import QSOManagerWorkspace
-
-# Shared registry: this lets the existing workspace understand HRDLog presence
-# without pretending that HRDLog exposes a full-log read API.
-PROVIDERS["HRDLOG"] = HRDLogCloudAdapter
-
 
 class V8OnlineService:
     LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
@@ -90,7 +86,7 @@ class V8OnlineService:
             return dict(HRDLogCloudAdapter.capabilities)
         if provider == "HRD":
             return {"read": True, "add": False, "update": False, "delete": False}
-        adapter = PROVIDERS.get(provider)
+        adapter = PROVIDER_ADAPTERS.get(provider)
         return dict(adapter.capabilities) if adapter else {"read": False, "add": False, "update": False, "delete": False}
 
     def status(self) -> Dict[str, Any]:
@@ -169,8 +165,7 @@ class V8OnlineService:
             return EQSLInboxAdapter(creds)
         if provider == "HRDLOG":
             return HRDLogCloudAdapter(creds)
-        from ..adapters.cloud_logs import adapter_for
-        return adapter_for(provider, creds)
+        return adapter_for_provider(provider, creds)
 
     def test(self, provider: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
