@@ -10,6 +10,7 @@ Goals:
 from __future__ import annotations
 
 import ctypes
+import json
 import logging
 import os
 import socket
@@ -100,8 +101,11 @@ def _is_qso_manager(host: str, port: int) -> bool:
     payload = _health_payload(host, port)
     if not payload:
         return False
-    text = payload.lower()
-    return "qso" in text or "healthy" in text or '"status"' in text
+    try:
+        data = json.loads(payload)
+    except ValueError:
+        return False
+    return data.get("status") == "healthy" and str(data.get("version") or "").startswith("9.")
 
 
 def _port_in_use(host: str, port: int) -> bool:
