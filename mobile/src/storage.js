@@ -1,9 +1,11 @@
 import { Capacitor } from '@capacitor/core'
 import { SecureStoragePlugin } from 'capacitor-secure-storage-plugin'
 
+// Keep the v8 storage identifiers so upgrades retain credentials and snapshots.
 const DB_NAME='pu2bru-qso-manager-v8'
 const STORE='datasets'
 const CONNECTION_KEY='connections_v8'
+const ACTIVITY_KEY='__ACTIVITY_V9__'
 
 function db(){
   return new Promise((resolve,reject)=>{
@@ -75,4 +77,30 @@ export async function clearProviderCredentials(provider){
   delete all[provider]
   await saveConnections(all)
   return all
+}
+
+export async function appendActivity(kind,message,details={}){
+  const current=await loadDataset(ACTIVITY_KEY)
+  const rows=Array.isArray(current.records)?current.records:[]
+  const item={id:`${Date.now()}-${Math.random().toString(16).slice(2)}`,at:new Date().toISOString(),kind,message,details}
+  const next={records:[item,...rows].slice(0,500),updatedAt:item.at,metadata:{kind:'activity'}}
+  await saveDataset(ACTIVITY_KEY,next)
+  return item
+}
+
+export async function loadActivity(limit=300){
+  const current=await loadDataset(ACTIVITY_KEY)
+  return (current.records||[]).slice(0,limit)
+}
+
+export async function exportLocalBackup(keys){
+  const datasets=await loadAllDatasets(keys)
+  return {
+    product:'PU2BRU QSO Manager',
+    version:'9.0.0',
+    createdAt:new Date().toISOString(),
+    credentialsIncluded:false,
+    datasets,
+    activity:await loadActivity(500),
+  }
 }
