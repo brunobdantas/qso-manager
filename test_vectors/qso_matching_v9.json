@@ -3,26 +3,26 @@
   "cases": [
     {
       "name": "same_qso_30s",
-      "left": {"CALL":"K1ABC","QSO_DATE":"20260912","TIME_ON":"010203","BAND":"20M","FREQ":"14.074","MODE":"FT8"},
-      "right":{"CALL":"K1ABC","QSO_DATE":"20260912","TIME_ON":"010233","BAND":"20M","FREQ":"14.0744","MODE":"FT8"},
+      "left": {"CALL":"K1ABC","QSO_DATE":"20260912","TIME_ON":"01:02:03","BAND":"20M","FREQ":"14.074","MODE":"FT8"},
+      "right":{"CALL":"K1ABC","QSO_DATE":"20260912","TIME_ON":"01:02:33","BAND":"20M","FREQ":"14.0744","MODE":"FT8"},
       "expected":"auto"
     },
     {
       "name": "same_qso_4min_review",
-      "left":{"CALL":"LU1EEG","QSO_DATE":"20260912","TIME_ON":"022300","BAND":"40M","FREQ":"7.074","MODE":"FT8"},
-      "right":{"CALL":"LU1EEG","QSO_DATE":"20260912","TIME_ON":"022700","BAND":"40M","FREQ":"7.074","MODE":"FT8"},
+      "left":{"CALL":"LU1EEG","QSO_DATE":"20260912","TIME_ON":"02:23:00","BAND":"40M","FREQ":"7.074","MODE":"FT8"},
+      "right":{"CALL":"LU1EEG","QSO_DATE":"20260912","TIME_ON":"02:27:00","BAND":"40M","FREQ":"7.074","MODE":"FT8"},
       "expected":"review"
     },
     {
       "name": "different_band_never_match",
-      "left":{"CALL":"OK1AR","QSO_DATE":"20260912","TIME_ON":"123900","BAND":"20M","FREQ":"14.074","MODE":"FT8"},
-      "right":{"CALL":"OK1AR","QSO_DATE":"20260912","TIME_ON":"123900","BAND":"15M","FREQ":"21.074","MODE":"FT8"},
+      "left":{"CALL":"OK1AR","QSO_DATE":"20260912","TIME_ON":"12:39:00","BAND":"20M","FREQ":"14.074","MODE":"FT8"},
+      "right":{"CALL":"OK1AR","QSO_DATE":"20260912","TIME_ON":"12:39:00","BAND":"15M","FREQ":"21.074","MODE":"FT8"},
       "expected":"none"
     },
     {
       "name":"one_minute_boundary",
-      "left":{"CALL":"PY2XYZ","QSO_DATE":"20260912","TIME_ON":"180000","BAND":"10M","FREQ":"28.074","MODE":"FT8"},
-      "right":{"CALL":"PY2XYZ","QSO_DATE":"20260912","TIME_ON":"180100","BAND":"10M","FREQ":"28.0748","MODE":"FT8"},
+      "left":{"CALL":"PY2XYZ","QSO_DATE":"20260912","TIME_ON":"18:00:00","BAND":"10M","FREQ":"28.074","MODE":"FT8"},
+      "right":{"CALL":"PY2XYZ","QSO_DATE":"20260912","TIME_ON":"18:01:00","BAND":"10M","FREQ":"28.0748","MODE":"FT8"},
       "expected":"auto"
     }
   ]
