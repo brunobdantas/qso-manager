@@ -33,16 +33,20 @@ function ActionSheet({rows,selected,datasets,connections,onClose,onDone}){
  const chosen=rows.filter(x=>selected.has(x.id)),[mode,setMode]=useState('publish'),[target,setTarget]=useState('WRL'),[source,setSource]=useState('WRL'),[busy,setBusy]=useState(false),[msg,setMsg]=useState(''),[changes,setChanges]=useState({})
  const addTargets=Object.entries(REMOTE_CAPABILITIES).filter(([p,c])=>c.add&&configured(p,connections)).map(x=>x[0]),deleteSources=Object.entries(REMOTE_CAPABILITIES).filter(([p,c])=>c.delete&&configured(p,connections)).map(x=>x[0])
  async function execute(){
-  setBusy(true);setMsg('');let ok=0,fail=0
+  setBusy(true);setMsg('');let ok=0,fail=0,hrdAdded=[]
   try{
    if(mode==='export'){await shareText('qso-manager-selecao.adi',chosen.map(x=>recordToAdif(x.canonical)).join('\n'),'text/plain');ok=chosen.length}
    else for(const q of chosen){
     try{
-     if(mode==='publish'){await addRemote(target,connections[target],q.canonical)}
+     if(mode==='publish'){await addRemote(target,connections[target],q.canonical);if(target==='HRDLOG')hrdAdded.push(q.canonical)}
      if(mode==='delete'){const idx=q.refs[source];if(idx==null)throw new Error('QSO não existe em '+source);await deleteRemote(source,connections[source],datasets[source].records[idx])}
      if(mode==='update'){const idx=q.refs.WRL;if(idx==null)throw new Error('QSO não existe no WRL');await updateRemote('WRL',connections.WRL,datasets.WRL.records[idx],changes)}
      ok++
     }catch(e){fail++;console.warn('bulk',q.call,e)}
+   }
+   if(hrdAdded.length){
+    const old=datasets.HRDLOG||{records:[],metadata:{}}
+    await saveDataset('HRDLOG',{records:[...(old.records||[]),...hrdAdded],updatedAt:new Date().toISOString(),metadata:{...(old.metadata||{}),source:'bootstrap_plus_online'}})
    }
    await appendActivity('BULK',mode+' em '+chosen.length+' QSO(s)',{mode,target,source,ok,fail},fail?'PARTIAL':'OK');setMsg(ok+' concluído(s) · '+fail+' erro(s).');await onDone(mode==='export'?[]:[target,source,'WRL'])
   }catch(e){setMsg('Erro: '+e.message)}finally{setBusy(false)}
@@ -52,7 +56,7 @@ function ActionSheet({rows,selected,datasets,connections,onClose,onDone}){
 function DetailSheet({q,datasets,connections,onClose,onDone}){
  const [busy,setBusy]=useState(false),[msg,setMsg]=useState('')
  const missing=q.missingIn.filter(p=>REMOTE_CAPABILITIES[p]?.add&&configured(p,connections))
- async function publish(p){setBusy(true);try{await addRemote(p,connections[p],q.canonical);await appendActivity('PUBLISH',q.call+' enviado para '+p,{provider:p});setMsg('Enviado para '+p);await onDone([p])}catch(e){setMsg('Erro: '+e.message)}finally{setBusy(false)}}
+ async function publish(p){setBusy(true);try{await addRemote(p,connections[p],q.canonical);if(p==='HRDLOG'){const old=datasets.HRDLOG||{records:[],metadata:{}};await saveDataset('HRDLOG',{records:[...(old.records||[]),q.canonical],updatedAt:new Date().toISOString(),metadata:{...(old.metadata||{}),source:'bootstrap_plus_online'}})}await appendActivity('PUBLISH',q.call+' enviado para '+p,{provider:p});setMsg('Enviado para '+p);await onDone([p])}catch(e){setMsg('Erro: '+e.message)}finally{setBusy(false)}}
  return <div className="m9-sheet-bg" onMouseDown={e=>e.target===e.currentTarget&&onClose()}><section className="m9-sheet"><div className="m9-grabber"/><header><div><small>DETALHE DO QSO</small><h2>{q.call}</h2><p>{q.date} · {q.time.slice(0,4)} UTC · {q.band} · {q.mode}</p></div><button onClick={onClose}>×</button></header><div className="m9-source-badges">{q.providers.map(p=><Badge key={p} tone="ok">{SHORT[p]}</Badge>)}{q.missingIn.map(p=><Badge key={p} tone="warn">− {SHORT[p]}</Badge>)}</div>{q.differences.length>0&&<div className="m9-detail-card"><b>Diferenças</b>{q.differences.map((d,i)=><p key={i}>{d.label}: {Object.entries(d.values).map(x=>x.join('=')).join(' · ')}</p>)}</div>}<div className="m9-detail-card"><b>Ações rápidas</b><div className="m9-action-grid">{missing.map(p=><Btn small key={p} disabled={busy} onClick={()=>publish(p)}>Enviar para {SHORT[p]}</Btn>)}</div></div><div className="m9-detail-card"><b>Valores por fonte</b>{Object.entries(q.refs).map(([p,i])=><div className="m9-record-row" key={p}><Badge>{SHORT[p]}</Badge><code>{JSON.stringify(datasets[p]?.records?.[i]||{})}</code></div>)}</div>{msg&&<div className={'m9-message '+(msg.startsWith('Erro')?'error':'')}>{msg}</div>}</section></div>
 }
 function CompareTool(){
@@ -80,7 +84,7 @@ export default function App900(){
  async function syncOne(p){setSyncing(true);setProgress('Atualizando '+LABELS[p]+'…');try{const next={...datasets},r=await refreshProvider(p,next);setDatasets(next);await appendActivity('SYNC',LABELS[p]+' atualizado',{provider:p,records:r.records?.length||0});setMessage(LABELS[p]+': '+fmt(r.records?.length)+' registro(s).')}catch(e){setMessage('Erro: '+e.message)}finally{setProgress('');setSyncing(false)}}
  async function importAdif(p,file){if(!file)return;try{const records=parseAdif(await file.text());if(!records.length)throw new Error('Nenhum QSO válido');const payload={records,updatedAt:new Date().toISOString(),metadata:{source:p==='HRD'?'local_adif':'bootstrap_adif',filename:file.name}};await saveDataset(p,payload);setDatasets({...datasets,[p]:payload});await appendActivity('IMPORT',LABELS[p]+' importado',{provider:p,records:records.length,filename:file.name});setMessage(LABELS[p]+': '+fmt(records.length)+' QSOs importados.')}catch(e){setMessage('Erro: '+e.message)}}
  async function updateHrdlog(){setSyncing(true);try{const candidates=hrdlogPlan(datasets.QRZ?.records||[],datasets.HRDLOG?.records||[]).slice(0,500);if(!candidates.length){setMessage('HRDLog alinhado.');return}const known=[...(datasets.HRDLOG?.records||[])];let ok=0;for(const q of candidates){try{await pushHRDLog(connections.HRDLOG,datasets.QRZ.records[q.index]);known.push(datasets.QRZ.records[q.index]);ok++}catch{}}const payload={records:known,updatedAt:new Date().toISOString(),metadata:{source:'bootstrap_plus_online'}};await saveDataset('HRDLOG',payload);setDatasets({...datasets,HRDLOG:payload});await appendActivity('PUBLISH','HRDLog atualizado',{sent:ok});setMessage('HRDLog: '+ok+' QSO(s) enviados/confirmados.')}finally{setSyncing(false)}}
- async function afterRemote(providers){const next={...datasets};for(const p of [...new Set(providers||[])])if(['QRZ','WRL','CLUBLOG','EQSL'].includes(p)&&configured(p,connections)){try{await refreshProvider(p,next)}catch{}}setDatasets(next);setActivity(await loadActivity());setSelected(new Set())}
+ async function afterRemote(providers){const next=await loadAllDatasets(KEYS);for(const p of [...new Set(providers||[])])if(['QRZ','WRL','CLUBLOG','EQSL'].includes(p)&&configured(p,connections)){try{await refreshProvider(p,next)}catch{}}setDatasets(next);setActivity(await loadActivity());setSelected(new Set())}
  function toggle(id){setSelected(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n})}
  if(loading)return <div className="m9-splash"><div>PU<br/>BRU</div><h1>QSO Manager</h1><p>Preparando sua estação…</p></div>
  const primary=[['home','Início','⌂'],['log','Log','◎'],['review','Revisar','!'],['qsl','QSL','✓'],['sources','Fontes','◉']]
