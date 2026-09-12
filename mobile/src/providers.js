@@ -36,7 +36,7 @@ async function qrzPost(c,action,option){
   return data
 }
 function cleanHtml(text){return String(text||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim()}
-function qrzStatusCount(data){
+export function qrzStatusCount(data){
   for(const value of [data.COUNT,data.QSOS,data.DATA]){
     const text=String(value||'').trim()
     if(/^\d+$/.test(text))return Number(text)
