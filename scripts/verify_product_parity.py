@@ -37,7 +37,7 @@ def main() -> int:
     require(f'#define MyAppVersion "{VERSION}"' in installer, "Windows installer version must match product contract")
     require(mobile_package.get("version") == VERSION, "Android package version must match product contract")
     require("--gui-smoke-test" in launcher, "Windows launcher must expose an end-to-end GUI smoke test")
-    require("/api/product/bootstrap" in product_api, "unified bootstrap endpoint missing")
+    require('prefix="/api/product"' in product_api and '@router.get("/bootstrap")' in product_api, "unified bootstrap endpoint missing")
 
     for item in CONTRACT["navigation"]:
         nav_id = item["id"]
@@ -55,13 +55,12 @@ def main() -> int:
         "hrdlog_online_insert": ("/api/product/hrdlog/push", "pushHRDLog"),
         "adif_export": ("/api/qso-manager/export", "recordToAdif"),
         "activity_history": ("/api/qso-manager/activity", "loadActivity"),
-        "credential_security": ("CONEXÃO SEGURA", "Secure"),
+        "credential_security": ("CONEXÃO SEGURA", "SecureStoragePlugin"),
     }
     storage = read("mobile/src/storage.js")
     for capability, (desktop_marker, mobile_marker) in markers.items():
         require(desktop_marker in desktop, f"desktop missing {capability}")
-        mobile_haystack = mobile + storage
-        require(mobile_marker in mobile_haystack, f"mobile missing {capability}")
+        require(mobile_marker in mobile + storage, f"mobile missing {capability}")
 
     print(f"QSO Manager {VERSION}: product parity contract passed")
     print(f"Navigation: {', '.join(x['id'] for x in CONTRACT['navigation'])}")
