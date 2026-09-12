@@ -1,0 +1,35 @@
+{
+  "product": "PU2BRU QSO Manager",
+  "version": "9.0.0",
+  "navigation": [
+    {"id": "overview", "label": "Visão geral"},
+    {"id": "log", "label": "Log"},
+    {"id": "inbox", "label": "Pendências"},
+    {"id": "qsl", "label": "QSL"},
+    {"id": "sources", "label": "Fontes"},
+    {"id": "tools", "label": "Ferramentas"}
+  ],
+  "capabilities": [
+    "sync_online_sources",
+    "consolidated_log",
+    "qso_detail_by_source",
+    "missing_source_detection",
+    "field_divergence_detection",
+    "duplicate_detection",
+    "qsl_evidence_eqsl",
+    "qsl_evidence_lotw",
+    "advanced_multi_adif_compare",
+    "local_hrd_adif_source",
+    "hrdlog_adif_bootstrap",
+    "hrdlog_online_insert",
+    "adif_export",
+    "backup_export",
+    "activity_history",
+    "credential_security"
+  ],
+  "providers": ["QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD"],
+  "platforms": {
+    "windows": {"all_capabilities": true, "hrd_local_mode": "ADIF/local workspace"},
+    "android": {"all_capabilities": true, "hrd_local_mode": "ADIF import"}
+  }
+}
