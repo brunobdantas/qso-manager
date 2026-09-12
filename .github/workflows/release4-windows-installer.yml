@@ -2,7 +2,7 @@ name: Release 4 Windows Installer
 
 on:
   push:
-    branches: [release4-windows-installer, main]
+    branches: [release4-windows-installer, release/v9-unified-stable, main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -43,6 +43,9 @@ jobs:
 
       - name: Backend regression suite
         run: python -m pytest backend/tests -q
+
+      - name: Verify product parity contract
+        run: python scripts/verify_product_parity.py
 
       - name: Release 2 verification
         run: python scripts/verify_release2.py
@@ -102,6 +105,18 @@ jobs:
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
           if (-not (Test-Path $db)) { throw "Packaged database was not created in persistent data directory" }
 
+      - name: GUI smoke-test packaged executable
+        shell: pwsh
+        env:
+          QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-gui-smoke
+        run: |
+          $process = Start-Process -FilePath ".\dist\PU2BRU-QSO-Manager\PU2BRU-QSO-Manager.exe" -ArgumentList "--gui-smoke-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            $log = Join-Path $env:QSO_MANAGER_DATA_DIR "logs\startup.log"
+            if (Test-Path $log) { Get-Content $log -Tail 200 }
+            throw "Packaged GUI smoke-test failed with exit code $($process.ExitCode)"
+          }
+
       - name: Ensure Inno Setup
         shell: pwsh
         run: |
@@ -140,6 +155,19 @@ jobs:
           if ($process.ExitCode -ne 0) { throw "Installed app self-test failed with exit code $($process.ExitCode)" }
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
           if (-not (Test-Path $db)) { throw "Installed app did not create its database" }
+
+      - name: GUI smoke-test installed copy
+        shell: pwsh
+        env:
+          QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-installed-gui-smoke
+        run: |
+          $installedExe = Join-Path $env:TEMP "PU2BRU-QSO-Manager-installed\PU2BRU-QSO-Manager.exe"
+          $process = Start-Process -FilePath $installedExe -ArgumentList "--gui-smoke-test" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            $log = Join-Path $env:QSO_MANAGER_DATA_DIR "logs\startup.log"
+            if (Test-Path $log) { Get-Content $log -Tail 200 }
+            throw "Installed GUI smoke-test failed with exit code $($process.ExitCode)"
+          }
 
       - name: Upload Windows installer
         uses: actions/upload-artifact@v4
