@@ -215,7 +215,7 @@ function BulkModal({ selectedIds, status, preset, onClose, onDone }) {
   const addTargets = providers.filter(p=>p.configured&&p.capabilities?.add)
   const updateTargets = providers.filter(p=>p.configured&&p.capabilities?.update)
   const deleteTargets = providers.filter(p=>p.configured&&p.capabilities?.delete)
-  const moveSources = providers.filter(p=>p.configured)
+  const moveSources = providers.filter(p=>p.comparison_role!=='qsl_evidence'&&(p.configured||p.snapshot?.records))
   const moveTargets = addTargets
   const editable = ['FREQ','BAND','MODE','RST_SENT','RST_RCVD','GRIDSQUARE','STATE','COMMENT','NAME','QTH']
 
@@ -243,11 +243,12 @@ function QsoDetail({ logicalId, status, onClose, onBulk }) {
   if(!logicalId)return null
   const providers=status?.providers||[]
   const byName=Object.fromEntries(providers.map(p=>[p.provider,p]))
+  const writableMissing=(data?.missing_in||[]).filter(p=>byName[p]?.capabilities?.add)
   return <div className="drawer-backdrop" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><aside className="qso-drawer">
     <div className="drawer-head"><div><span className="eyebrow">DETALHE DO QSO</span><h2>{data?data.call:'Carregando…'}</h2>{data&&<p>{data.date} {data.time} · {data.band} · {data.mode}</p>}</div><button className="icon-button" onClick={onClose}>×</button></div>
     {error&&<Notice tone="error">{error}</Notice>}
     {data&&<><div className="drawer-summary"><div><span>Fontes</span><strong>{data.providers.map(p=><Pill key={p} tone={p==='QRZ'?'truth':'ok'}>{p}</Pill>)}</strong></div><div><span>Ausente em</span><strong>{data.missing_in.length?data.missing_in.join(', '):'Nenhuma fonte carregada'}</strong></div><div><span>Diferenças</span><strong>{data.difference_fields.length?data.difference_fields.join(', '):'Nenhuma relevante'}</strong></div></div>
-      <div className="drawer-actions"><Button small onClick={()=>onBulk({action:'PUBLISH',target:data.missing_in?.[0]||'WRL'},[data.logical_id])} disabled={!data.missing_in?.length}>Enviar para fonte ausente</Button>{data.providers.filter(p=>byName[p]?.capabilities?.update).map(p=><Button key={`u-${p}`} small kind="secondary" onClick={()=>onBulk({action:'UPDATE',target:p},[data.logical_id])}>Editar no {p}</Button>)}{data.providers.filter(p=>byName[p]?.capabilities?.delete).map(p=><Button key={`d-${p}`} small kind="danger" onClick={()=>onBulk({action:'DELETE',target:p},[data.logical_id])}>Excluir do {p}</Button>)}</div>
+      <div className="drawer-actions"><Button small onClick={()=>onBulk({action:'PUBLISH',target:writableMissing[0]||'WRL'},[data.logical_id])} disabled={!writableMissing.length}>Enviar para fonte ausente</Button>{data.providers.filter(p=>byName[p]?.capabilities?.update).map(p=><Button key={`u-${p}`} small kind="secondary" onClick={()=>onBulk({action:'UPDATE',target:p},[data.logical_id])}>Editar no {p}</Button>)}{data.providers.filter(p=>byName[p]?.capabilities?.delete).map(p=><Button key={`d-${p}`} small kind="danger" onClick={()=>onBulk({action:'DELETE',target:p},[data.logical_id])}>Excluir do {p}</Button>)}</div>
       <div className="source-record-stack">{Object.entries(data.source_records||{}).map(([provider,payload])=><section key={provider} className="source-record"><div className="source-record-head"><div><Pill tone={provider==='QRZ'?'truth':'neutral'}>{provider}</Pill><b>{payload.external_id||'sem ID remoto exposto'}</b></div><span>{Object.keys(payload.record||{}).length} campos</span></div><div className="record-grid">{Object.entries(payload.record||{}).sort(([a],[b])=>a.localeCompare(b)).map(([key,value])=><div key={key}><span>{key}</span><code>{String(value)}</code></div>)}</div></section>)}</div>
     </>}
   </aside></div>
