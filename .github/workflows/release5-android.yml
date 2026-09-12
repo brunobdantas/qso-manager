@@ -2,7 +2,7 @@ name: Release 5 Android APK
 
 on:
   push:
-    branches: [main, feature/v8-mobile-online]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
