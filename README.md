@@ -1,105 +1,166 @@
 # PU2BRU QSO Manager
 
-Central local para baixar, comparar, reconciliar e gerenciar QSOs sem depender de abrir cada plataforma individualmente.
+QSO Manager v9 é uma central unificada para **baixar, importar, comparar, reconciliar, revisar e gerenciar QSOs** no Windows e no Android.
 
-## Release 5 — Connected QSO Hub
+A experiência principal é a mesma nas duas plataformas:
 
-O fluxo principal conecta **QRZ, World Radio League (WRL), Club Log e eQSL** ao backend local. Cada fonte pode ser atualizada sob demanda e o QSO Manager preserva um snapshot local completo para pesquisa, comparação e evidência.
+**Visão geral → Log → Revisar → QSL → Fontes**
 
-O **QRZ é a base preferencial**, mas não é tratado como verdade cega: um QSO ausente no QRZ e presente em outras fontes aparece como candidato de desatualização. Quando duas ou mais fontes independentes corroboram o mesmo QSO, a evidência é elevada, porém nenhuma correção é executada automaticamente.
+Recursos avançados, histórico e diagnóstico ficam em segundo nível para não poluir a jornada principal.
 
-Principais recursos:
+## Fontes e capacidades
 
-- baixar snapshots completos de QRZ, WRL, Club Log e eQSL;
-- atualizar uma fonte ou todas as fontes conectadas;
-- comparar QRZ × cada fonte usando o mesmo núcleo tolerante do comparador ADIF;
-- separar faltantes, divergências de campos e duplicidades prováveis;
-- pesquisar QSOs nos quatro snapshots sem abrir os sites;
-- enviar QSO faltante do QRZ para uma fonte suportada;
-- adicionar ao QRZ um QSO corroborado por outra fonte, somente com confirmação explícita;
-- editar/excluir contatos WRL por ID estável;
-- excluir contato Club Log por identidade exata;
-- manter o comparador manual de dois arquivos ADIF para qualquer outra fonte.
+| Fonte | Leitura | Inclusão | Edição | Exclusão | Observação |
+| --- | --- | --- | --- | --- | --- |
+| QRZ | API | Sim | Não | Não | Sem `REPLACE`; protege confirmações |
+| World Radio League | API | Sim | Sim | Sim | ID remoto estável |
+| Club Log | API | Sim | Não | Sim | Exclusão por identidade exata |
+| eQSL OutBox | API | Sim | Não | Não | Upload via interface de logger |
+| eQSL Inbox | API | Evidência QSL | — | — | Confirmações recebidas |
+| LoTW | API | Evidência QSL | — | — | Leitura de confirmações |
+| HRDLog.net | ADIF + online | Sim | Não | Não | Estado = bootstrap ADIF + inserts confirmados |
+| Ham Radio Deluxe | ADIF | — | — | — | Fonte local comparável em Windows e Android |
 
-### Credenciais
+O **QRZ é a referência preferencial**, não uma verdade cega. Se outras fontes independentes contradizem ou complementam o QRZ, o sistema apresenta a evidência para revisão em vez de sobrescrever silenciosamente.
 
-As credenciais são cadastradas pela própria tela **Fontes** e ficam apenas no backend local. O arquivo de conexões é criptografado com AES-GCM e a interface nunca devolve a chave/senha completa depois de salva.
+## Paridade Windows e Android
 
-Dados persistentes:
+Ambas as plataformas oferecem:
 
-```text
-%LOCALAPPDATA%\PU2BRU QSO Manager\
-```
+- log lógico consolidado por QSO;
+- QRZ, WRL, Club Log, eQSL, LoTW e HRDLog;
+- importação/reconciliação ADIF do Ham Radio Deluxe;
+- detecção de ausências, divergências e duplicidades;
+- central de QSL;
+- publicação remota conforme capacidade do provedor;
+- ações em lote seguras;
+- exportação ADIF;
+- comparação manual/avançada de ADIF;
+- análise manual de QSL por arquivos;
+- histórico de ações;
+- diagnóstico operacional.
 
-Snapshots das APIs:
+A interface é adaptada ao dispositivo: desktop privilegia densidade de dados; Android usa cards, bottom navigation e sheets. A regra de negócio permanece equivalente.
 
-```text
-%LOCALAPPDATA%\PU2BRU QSO Manager\cloud_snapshots\
-```
+## Windows 10/11
 
-Para configurar as fontes:
+Use o instalador gerado pelo workflow **Release 4 Windows Installer**. Python, Node.js e npm não são necessários na máquina do usuário.
 
-- **QRZ:** Logbook API Key de uma assinatura compatível com Logbook API.
-- **WRL:** Developer API Key criada em Integrations → Developer API; Logbook ID é opcional.
-- **Club Log:** e-mail, Application Password, indicativo do log e API Key para operações de escrita.
-- **eQSL:** indicativo/Username, senha e QTH Nickname opcional.
+O v9 removeu a dependência de Tk/Tcl do launcher. Ao abrir o atalho:
 
-## Segurança de escrita remota
+1. o processo cria o diretório persistente;
+2. escolhe uma porta local disponível, preferindo `127.0.0.1:8000`;
+3. inicia o FastAPI/Uvicorn;
+4. espera `/api/health` responder;
+5. abre o navegador padrão.
 
-O sistema é conservador por desenho.
+Se a porta 8000 estiver ocupada por outro programa, o launcher procura automaticamente outra porta local.
 
-**QRZ:** leitura completa e `INSERT` de QSO ausente são suportados. O sistema não usa `REPLACE`, não oferece edição arbitrária nem `DELETE`. Após `INSERT`, o LOGID retornado é consultado novamente por FETCH; falha de verificação aborta a operação. Isso preserva a regra de QRZ como base preferencial sem arriscar confirmações.
+### Diagnóstico de inicialização
 
-**WRL:** leitura, inclusão, edição e exclusão usam a API REST e o ID remoto estável do contato. Alterações partem de snapshot local e exigem confirmação.
-
-**Club Log:** download completo, inclusão individual em tempo real e exclusão por identidade exata. O export do Club Log é tratado como representação minimalista e não como cópia byte a byte do log original.
-
-**eQSL:** leitura do OutBox e inclusão são suportadas. Edição e exclusão remotas não são oferecidas sem interface oficial documentada para essas operações.
-
-Antes de escrita/exclusão suportada, o snapshot local do destino é copiado para backup. Nenhuma divergência de campo sobrescreve automaticamente o QRZ.
-
-## Comparação e identidade
-
-O pareamento usa CALL, data, banda, horário e frequência com tolerância controlada. Modo não é uma chave rígida; equivalências como `MFSK/SUBMODE=FT4` × `FT4` são aceitas. Diferenças pequenas de segundos e frequência podem ser classificadas como toleradas. Duplicidades praticamente idênticas na mesma fonte não viram falsos QSOs faltantes.
-
-O comparador manual continua disponível para exports ADIF completos ou parciais. Upload manual permanece conservador: ausência em `PARTIAL_EXPORT` não prova que um QSO esteja faltando.
-
-## Windows 11 — instalação recomendada
-
-Use `PU2BRU-QSO-Manager-Setup.exe` gerado pelo workflow Windows. O instalador contém o runtime necessário; **não é necessário instalar Python, Node.js ou npm**.
-
-O aplicativo inicia somente em `127.0.0.1:8000` e abre a interface no navegador padrão. A janela nativa permanece aberta enquanto o servidor local está ativo; use **Encerrar** para desligá-lo corretamente.
-
-O banco principal permanece em:
+O launcher grava:
 
 ```text
-%LOCALAPPDATA%\PU2BRU QSO Manager\data\qso_manager.db
+%LOCALAPPDATA%\PU2BRU QSO Manager\logs\launcher.log
 ```
 
-Atualizar ou reinstalar o programa não remove os dados persistentes.
+A própria aplicação tem a tela **Diagnóstico**, que verifica:
 
-### Aviso do Windows
+- banco SQLite;
+- frontend empacotado;
+- permissão de escrita;
+- diretório de logs;
+- registro de provedores;
+- informações do runtime instalado.
 
-O instalador ainda não possui assinatura digital de code signing. O Windows SmartScreen pode mostrar **Editor desconhecido**. Confirme que o arquivo veio do workflow oficial deste repositório antes de executá-lo.
+O CI executa, tanto no bundle quanto na instalação silenciosa:
 
-## Execução a partir do código-fonte — somente desenvolvimento
-
-Para desenvolvimento, use Python 3.12+ e Node.js 22+:
-
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup.ps1
+```text
+PU2BRU-QSO-Manager.exe --self-test
+PU2BRU-QSO-Manager.exe --smoke-start
 ```
 
-Depois execute `start.bat`.
+O segundo comando sobe o servidor real, consulta health/root e encerra. Assim, um instalador não é aprovado apenas porque o executável existe.
 
-## Validação
+## Android
 
-O pipeline Windows compila o React, executa os testes de backend e regressão, gera o executável standalone com PyInstaller, executa self-test já no binário empacotado e cria o Setup com Inno Setup. O self-test da Release 5 também valida que o Connected QSO Hub, criptografia local e rotas `/api/cloud/*` foram incluídos no executável.
+O APK é gerado pelo workflow **Release 5 Android APK**.
 
-O Release 1 continua protegido pela suíte imutável de acceptance em Linux.
+As credenciais ficam no Secure Storage/Android Keystore; snapshots e histórico ficam no armazenamento local da aplicação. Requisições aos provedores usam a camada HTTP nativa do Capacitor.
 
-## Arquitetura legada/persistente
+A partir da v9 o workflow mantém uma identidade de assinatura de desenvolvimento persistente no branch principal, evitando troca de certificado a cada build. Builds antigos da série v8 podem exigir uma última desinstalação antes da primeira instalação v9.
 
-`RawQSO -> NormalizedQSO -> QSOIdentity -> LogicalQSO -> QSOSourceLink`
+## Segurança de escrita
 
-O `LogicalQSO` é uma visão materializada. Overrides e resoluções humanas pertencem à `QSOIdentity` persistente. O Connected QSO Hub usa snapshots independentes para que a análise de nuvem não altere silenciosamente essa base local.
+O QSO Manager aplica a capacidade real de cada provedor:
+
+- **QRZ:** leitura + `INSERT`; sem `UPDATE`, `DELETE` ou `REPLACE`.
+- **WRL:** leitura, inclusão, edição e exclusão.
+- **Club Log:** leitura, inclusão e exclusão exata.
+- **eQSL:** leitura e inclusão.
+- **HRDLog.net:** inclusão online; não há leitura completa suportada.
+- **HRD:** somente evidência/importação ADIF.
+
+Operações em lote seguem seleção → ação → confirmação → execução → atualização do estado conhecido.
+
+## HRDLog.net
+
+O fluxo é deliberadamente híbrido:
+
+1. importe um export ADIF completo para criar o estado inicial;
+2. o QSO Manager identifica ausências de alta confiança;
+3. envia apenas os QSOs seguros ao endpoint de realtime upload;
+4. após confirmação remota, adiciona o QSO ao snapshot gerenciado;
+5. alterações feitas diretamente no site do HRDLog exigem nova reconciliação ADIF.
+
+O sistema não usa scraping para fingir sincronização bidirecional.
+
+## QSL
+
+eQSL Inbox e LoTW são tratados como evidências independentes. A regra é invariável:
+
+> `QSO_DATE` nunca é usado como data de recebimento da QSL.
+
+Se a fonte comprova o recebimento mas não fornece uma data explícita, o sistema registra a evidência sem inventar a data.
+
+## Desenvolvimento
+
+Backend:
+
+```bash
+cd backend
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --reload
+```
+
+Frontend desktop:
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Mobile:
+
+```bash
+cd mobile
+npm install
+npm test
+npm run build
+```
+
+## Testes e releases
+
+Os workflows verificam regressões do matching, identidade, cobertura, segurança de escrita, integrações, frontend, runtime Windows e Android.
+
+Arquitetura principal:
+
+```text
+backend/   FastAPI + serviços de domínio + snapshots + SQLite
+frontend/  shell v9 desktop/responsivo
+mobile/    app Android v9 com providers nativos e o mesmo modelo de reconciliação
+installer/ launcher e instalador Windows
+```
+
+A versão de release atual é **9.0.0**.
