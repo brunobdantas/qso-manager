@@ -1,13 +1,12 @@
 """Unified product facade for QSO Manager v9.
 
-v9 makes one workspace the product surface on every platform.  Online logbooks,
-confirmation feeds and manual ADIF sources all participate in the same logical
-QSO model.  The older v5-v8 APIs remain available for compatibility, but the
-v9 UI consumes this facade.
+Every platform exposes the same product journey. Provider-specific limitations
+remain explicit, but online logs, confirmation feeds and manual ADIF sources
+all participate in the same logical-QSO workspace.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..adif.parser import ADIFParser
@@ -19,6 +18,14 @@ class V9ProductService(V8OnlineService):
     VERSION = "9.0.0"
     LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
     DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD")
+    LABELS = {
+        **V8OnlineService.LABELS,
+        "HRD": "Ham Radio Deluxe",
+    }
+    NOTES = {
+        **V8OnlineService.NOTES,
+        "HRD": "Log local via ADIF. No Windows e no Android participa da mesma comparação consolidada.",
+    }
 
     def _normalize_provider(self, provider: str) -> str:
         name = str(provider or "").strip().upper()
@@ -37,20 +44,26 @@ class V9ProductService(V8OnlineService):
         return super()._capabilities(provider)
 
     def status(self) -> Dict[str, Any]:
+        # super().status() is intentionally reused so hardened provider
+        # capability/credential logic stays in one place. LABELS/NOTES above
+        # make HRD safe while this subclass changes DISPLAY_ORDER.
         base = super().status()
-        rows = [row for row in base.get("providers", []) if row.get("provider") != "HRD"]
-        hrd_summary = self.snapshots.summary("HRD")
-        rows.append({
-            "provider": "HRD",
-            "label": "Ham Radio Deluxe",
-            "configured": hrd_summary.get("downloaded_at") is not None,
-            "credentials": {},
-            "snapshot": hrd_summary,
-            "capabilities": self._capabilities("HRD"),
-            "note": "Log local via ADIF. No Windows pode representar o export do HRD; no Android o mesmo arquivo pode ser importado e comparado.",
-            "source_kind": "local_adif",
-            "comparison_role": "log",
-        })
+        rows = []
+        for row in base.get("providers", []):
+            if row.get("provider") == "HRD":
+                summary = self.snapshots.summary("HRD")
+                row = {
+                    **row,
+                    "label": self.LABELS["HRD"],
+                    "configured": summary.get("downloaded_at") is not None,
+                    "credentials": {},
+                    "snapshot": summary,
+                    "capabilities": self._capabilities("HRD"),
+                    "note": self.NOTES["HRD"],
+                    "source_kind": "local_adif",
+                    "comparison_role": "log",
+                }
+            rows.append(row)
         order = {name: i for i, name in enumerate(self.DISPLAY_ORDER)}
         rows.sort(key=lambda row: order.get(row.get("provider"), 999))
         return {
@@ -122,15 +135,15 @@ class V9ProductService(V8OnlineService):
 
     def clear_snapshot(self, provider: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
-        before = self.snapshots.summary(provider)
-        self.snapshots.clear(provider)
+        result = self.snapshots.clear(provider)
         QSOManagerWorkspace.invalidate_cache()
-        return {"ok": True, "provider": provider, "records_removed": int(before.get("records") or 0)}
+        return {"ok": True, **result}
 
     def bootstrap(self) -> Dict[str, Any]:
+        status = self.status()
         return {
             "version": self.VERSION,
-            "status": self.status(),
+            "status": status,
             "dashboard": self.dashboard(),
             "workspace": self._workspace().options(),
             "qsl": self.qsl_analysis(),
@@ -153,4 +166,5 @@ class V9ProductService(V8OnlineService):
                 for row in status["providers"]
             ],
             "capability_parity": True,
+            "navigation": status.get("navigation", []),
         }
