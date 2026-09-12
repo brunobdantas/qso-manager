@@ -249,6 +249,28 @@ class CloudHubService:
                 verification = adapter.fetch_logids([str(result["external_id"])])
                 if not verification.get("verified"):
                     raise CloudProviderError("QRZ insert returned success but exact re-FETCH verification failed")
+
+        # HRDLog has no supported full-log read API. Once its realtime endpoint
+        # confirms an insert/duplicate, append that exact QSO to the managed
+        # snapshot instead of scheduling an impossible remote re-sync.
+        if target == "HRDLOG":
+            existing = list(self.snapshots.load("HRDLOG").get("records") or [])
+            existing.append(dict(row))
+            metadata = dict(self.snapshots.load("HRDLOG").get("metadata") or {})
+            metadata.update({
+                "source": "hrdlog_bootstrap_plus_online",
+                "coverage": metadata.get("coverage") or "FULL_EXPORT",
+                "managed_after_bootstrap": True,
+                "online_managed_records": int(metadata.get("online_managed_records") or 0) + 1,
+            })
+            self.snapshots.save("HRDLOG", existing, metadata)
+            try:
+                from .qso_manager_workspace import QSOManagerWorkspace
+                QSOManagerWorkspace.invalidate_cache()
+            except Exception:
+                pass
+            return {"ok": True, "source": source, "target": target, "backup": str(backup) if backup else None, "result": result, "verification": None, "needs_resync": False}
+
         return {"ok": True, "source": source, "target": target, "backup": str(backup) if backup else None, "result": result, "verification": verification, "needs_resync": target != "QRZ"}
 
     def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False) -> Dict[str, Any]:
