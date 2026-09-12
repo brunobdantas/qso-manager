@@ -463,7 +463,7 @@ class QSOManagerWorkspace:
 
     def export_adif(self, logical_ids: Sequence[str]) -> str:
         records = [self.canonical_record(logical_id) for logical_id in logical_ids]
-        return records_to_adif(records, program_id="PU2BRU-QSO-Manager-6")
+        return records_to_adif(records, program_id="PU2BRU-QSO-Manager-9")
 
     def plan_bulk(
         self,
