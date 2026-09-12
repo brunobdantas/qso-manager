@@ -117,11 +117,11 @@ class V8OnlineService:
                 "comparison_role": "qsl_evidence" if provider in {"EQSL_INBOX", "LOTW"} else "log",
             })
         return {
-            "version": "8.0.0",
-            "mobile_policy": "online_only",
+            "version": "9.0.0",
+            "mobile_policy": "unified_cross_platform",
             "truth_source": "QRZ",
             "providers": rows,
-            "hrd_local_in_mobile": False,
+            "hrd_local_in_mobile": True,
             "hrdlog_policy": {
                 "full_read_api": False,
                 "bootstrap": "ADIF",
@@ -453,7 +453,7 @@ class V8OnlineService:
         issues = self.issues(limit=20)
         qsl = self.qsl_analysis()
         return {
-            "version": "8.0.0",
+            "version": "9.0.0",
             "summary": workspace.get("summary") or {},
             "issues": issues,
             "qsl_summary": qsl.get("summary") or {},
