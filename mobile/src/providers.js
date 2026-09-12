@@ -36,6 +36,31 @@ async function qrzPost(c,action,option){
   return data
 }
 function cleanHtml(text){return String(text||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim()}
+function qrzStatusCount(data){
+  for(const value of [data.COUNT,data.QSOS,data.DATA]){
+    const text=String(value||'').trim()
+    if(/^\d+$/.test(text))return Number(text)
+    const m=text.match(/(?:TOTAL(?:_QSO)?S?|QSOS?|COUNT)\s*[=:]\s*(\d+)/i)
+    if(m)return Number(m[1])
+  }
+  return 0
+}
+function qrzResponseCount(data){
+  const n=Number(String(data.COUNT||'').trim())
+  return Number.isFinite(n)?n:0
+}
+function qrzLogIds(data,page=[]){
+  const ids=[]
+  for(const row of page){
+    const n=Number(row.APP_QRZLOG_LOGID||row.QSO_ID)
+    if(Number.isFinite(n)&&!ids.includes(n))ids.push(n)
+  }
+  for(const token of String(data.LOGIDS||'').split(',')){
+    const n=Number(token.trim())
+    if(Number.isFinite(n)&&!ids.includes(n))ids.push(n)
+  }
+  return ids
+}
 function hrefs(text){const out=[];const re=/href=["']([^"']+\.(?:adi|adif|txt)(?:\?[^"']*)?)["']/ig;let m;while((m=re.exec(String(text||''))))out.push(m[1]);return out}
 async function adifFromBuildPage(endpoint,params){
   const first=await get(endpoint,params)
@@ -51,43 +76,66 @@ async function adifFromBuildPage(endpoint,params){
 }
 
 export async function fetchQRZ(c){
-  // Validate the exact logbook key first. QRZ requires KEY + ACTION and an identifiable User-Agent.
-  await qrzPost(c,'STATUS')
+  // STATUS is authoritative for access and expected record count.
+  const statusBefore=await qrzPost(c,'STATUS')
+  const expectedBefore=qrzStatusCount(statusBefore)
 
-  // Prefer QRZ's canonical full-book request. This is also what the hardened
-  // Windows adapter uses. Large books fall back to the documented paging form.
+  let directError=''
   try{
     const all=await qrzPost(c,'FETCH','ALL')
     const records=parseAdif(all.ADIF||'')
-    const count=Number(all.COUNT||0)
-    if(records.length||count===0){
-      if(count&&records.length!==count)throw new Error('FETCH ALL incompleto: QRZ informou '+count+' e foram lidos '+records.length)
-      return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'DIRECT_ALL',pages:1}}
+    const responseCount=qrzResponseCount(all)
+    if(responseCount&&records.length!==responseCount){
+      throw new Error('FETCH ALL incompleto: QRZ informou COUNT='+responseCount+', mas foram lidos '+records.length)
+    }
+    if(expectedBefore&&records.length!==expectedBefore){
+      throw new Error('FETCH ALL retornou '+records.length+' QSOs, mas STATUS informa '+expectedBefore)
+    }
+    // Never accept a silent empty payload when STATUS says the book has data.
+    if(expectedBefore>0&&!records.length){
+      throw new Error('FETCH ALL retornou 0 QSOs, mas STATUS informa '+expectedBefore)
+    }
+    if(records.length||expectedBefore===0){
+      const statusAfter=await qrzPost(c,'STATUS')
+      const expectedAfter=qrzStatusCount(statusAfter)||expectedBefore
+      if(expectedAfter&&records.length!==expectedAfter){
+        throw new Error('O log mudou durante o download: QRZ informa '+expectedAfter+' QSOs e foram lidos '+records.length)
+      }
+      return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'DIRECT_ALL',pages:1,remoteStatusCount:expectedAfter,responseCount,verifiedRecordCount:records.length}}
     }
   }catch(e){
-    if(String(e?.message||'').startsWith('QRZ recusou'))throw e
-    // Timeout/incomplete direct fetch is recoverable through paging below.
+    directError=String(e?.message||e)
+    if(directError.startsWith('QRZ recusou'))throw e
   }
 
-  let after=0,pages=0,records=[]
+  let after=0,pages=0,records=[],seen=new Set()
   while(true){
-    // Keep paging options minimal. Some QRZ deployments reject compound
-    // selectors even though TYPE/STATUS are documented defaults.
     const data=await qrzPost(c,'FETCH','MAX:250,AFTERLOGID:'+after)
     const page=parseAdif(data.ADIF||'')
+    const ids=qrzLogIds(data,page)
+    const signature=[ids.slice(0,3).join(','),ids.slice(-3).join(','),page.length].join('|')
+    if(page.length&&seen.has(signature))throw new Error('QRZ repetiu a mesma página durante a paginação')
+    seen.add(signature)
+    if(!page.length)break
     records=records.concat(page);pages++
     if(page.length<250)break
-    const ids=[
-      ...page.map(x=>Number(x.APP_QRZLOG_LOGID||x.QSO_ID)).filter(Number.isFinite),
-      ...String(data.LOGIDS||'').split(',').map(x=>Number(x.trim())).filter(Number.isFinite),
-    ]
     if(!ids.length)throw new Error('QRZ não informou LOGID para continuar a paginação')
     const next=Math.max(...ids)+1
     if(next<=after)throw new Error('Paginação do QRZ não avançou')
     after=next
+    if(expectedBefore&&records.length>=expectedBefore)break
     if(pages>10000)throw new Error('Limite de paginação QRZ atingido')
   }
-  return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'PAGED_MINIMAL',pages}}
+
+  const statusAfter=await qrzPost(c,'STATUS')
+  const expectedAfter=qrzStatusCount(statusAfter)||expectedBefore
+  if(expectedAfter>0&&!records.length){
+    throw new Error('QRZ está conectado e informa '+expectedAfter+' QSOs, mas o download retornou 0. O snapshot anterior foi preservado.')
+  }
+  if(expectedAfter&&records.length!==expectedAfter){
+    throw new Error('Download QRZ incompleto: QRZ informa '+expectedAfter+' QSOs, mas foram baixados '+records.length+'. O snapshot anterior foi preservado.')
+  }
+  return {records,metadata:{coverage:'API_FULL_SYNC',strategy:'PAGED_MINIMAL',pages,remoteStatusCount:expectedAfter,verifiedRecordCount:records.length,directAllError:directError}}
 }
 
 export async function fetchWRL(c){
