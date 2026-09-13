@@ -48,7 +48,7 @@ Para configurar as fontes:
 
 O sistema é conservador por desenho.
 
-**QRZ:** leitura completa e `INSERT` de QSO ausente são suportados. O sistema não usa `REPLACE`, não oferece edição arbitrária nem `DELETE`. Após `INSERT`, o LOGID retornado é consultado novamente por FETCH; falha de verificação aborta a operação. Isso preserva a regra de QRZ como base preferencial sem arriscar confirmações.
+**QRZ:** leitura completa e `INSERT` de QSO ausente são suportados. Edição arbitrária e `DELETE` continuam bloqueados. Há uma única exceção deliberadamente estreita: a rotina **eQSL → QRZ** pode usar `INSERT + OPTION=REPLACE` exclusivamente para gravar `EQSL_QSL_RCVD` e `EQSL_QSLRDATE` em um LOGID exato. Ela faz preflight do lote, backup do snapshot e do ADIF live, canário, re-FETCH imediatamente antes de cada gravação e validação pós-write. `CONTEST_ID`, confirmação/data LoTW, identidade do QSO e demais campos protegidos precisam permanecer inalterados; qualquer desvio interrompe o lote. Fora dessa rotina auditada, o sistema não expõe `REPLACE`.
 
 **WRL:** leitura, inclusão, edição e exclusão usam a API REST e o ID remoto estável do contato. Alterações partem de snapshot local e exigem confirmação.
 
@@ -57,6 +57,12 @@ O sistema é conservador por desenho.
 **eQSL:** leitura do OutBox e inclusão são suportadas. Edição e exclusão remotas não são oferecidas sem interface oficial documentada para essas operações.
 
 Antes de escrita/exclusão suportada, o snapshot local do destino é copiado para backup. Nenhuma divergência de campo sobrescreve automaticamente o QRZ.
+
+## Sincronização eQSL recebido → QRZ
+
+A página **QSL** oferece uma análise específica para levar ao QRZ as confirmações recebidas no **eQSL Inbox**. O fluxo atualiza as duas fontes, calcula um plano e só habilita a gravação para pareamentos de alta confiança: mesmo CALL, data e banda, modo compatível, diferença de horário de até 2 minutos e relação estritamente 1:1. A data de recebimento precisa vir explicitamente do eQSL; `QSO_DATE` nunca é usado como substituto.
+
+O plano separa novas confirmações, alinhamentos de data, colisões e casos para revisão manual. A aplicação exige confirmação explícita do usuário e altera somente `EQSL_QSL_RCVD=Y` e `EQSL_QSLRDATE`. Casos ambíguos, sem LOGID, sem data explícita ou fora da janela segura permanecem sem escrita automática.
 
 ## Comparação e identidade
 

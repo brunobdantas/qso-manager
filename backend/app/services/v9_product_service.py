@@ -10,6 +10,7 @@ from typing import Any, Dict, Optional
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..adif.parser import ADIFParser
+from .eqsl_qrz_sync_service import EqslQrzSyncService
 from .qso_manager_workspace import QSOManagerWorkspace
 from .v8_online_service import V8OnlineService
 
@@ -138,6 +139,24 @@ class V9ProductService(V8OnlineService):
         result = self.snapshots.clear(provider)
         QSOManagerWorkspace.invalidate_cache()
         return {"ok": True, **result}
+
+    def _eqsl_qrz_service(self) -> EqslQrzSyncService:
+        return EqslQrzSyncService(credentials=self.credentials, snapshots=self.snapshots)
+
+    def eqsl_qrz_plan(self, refresh: bool = False) -> Dict[str, Any]:
+        """Preview only the strict, auditable eQSL Inbox -> QRZ updates."""
+        if refresh:
+            if not self._configured("QRZ"):
+                raise CloudProviderError("Configure o QRZ antes de analisar eQSL → QRZ")
+            if not self._configured("EQSL_INBOX"):
+                raise CloudProviderError("Configure o eQSL antes de analisar eQSL → QRZ")
+            self.sync("QRZ")
+            self.sync("EQSL_INBOX")
+        return self._eqsl_qrz_service().plan()
+
+    def eqsl_qrz_apply(self, confirm: bool = False, limit: int = 500) -> Dict[str, Any]:
+        """Apply the strict eQSL -> QRZ plan; dry-run unless confirm=True."""
+        return self._eqsl_qrz_service().apply(confirm=confirm, limit=limit)
 
     def bootstrap(self) -> Dict[str, Any]:
         status = self.status()

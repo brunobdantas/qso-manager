@@ -26,6 +26,11 @@ class HRDLogPushRequest(BaseModel):
     limit: int = Field(default=500, ge=1, le=5000)
 
 
+class EqslQrzApplyRequest(BaseModel):
+    confirm: bool = False
+    limit: int = Field(default=500, ge=1, le=500)
+
+
 def _run(fn):
     try:
         return fn()
@@ -65,6 +70,19 @@ def issues(limit: int = Query(default=250, ge=1, le=1000)):
 @router.get("/qsl")
 def qsl():
     return _run(lambda: V9ProductService().qsl_analysis())
+
+
+@router.get("/qsl/eqsl-qrz/plan")
+def eqsl_qrz_plan(refresh: bool = Query(default=False)):
+    return _run(lambda: V9ProductService().eqsl_qrz_plan(refresh=refresh))
+
+
+@router.post("/qsl/eqsl-qrz/apply")
+def eqsl_qrz_apply(request: EqslQrzApplyRequest):
+    return _run(lambda: V9ProductService().eqsl_qrz_apply(
+        confirm=request.confirm,
+        limit=request.limit,
+    ))
 
 
 @router.get("/log")
