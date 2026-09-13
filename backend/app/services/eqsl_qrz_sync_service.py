@@ -411,9 +411,11 @@ class EqslQrzSyncService:
             problems.append("TIME_ON")
         if self._band(live) != candidate["band"]:
             problems.append("BAND")
-        if not self._mode_compatible(
-            live,
-            {"MODE": candidate["mode_qrz"], "SUBMODE": candidate["mode_qrz"]},
+        live_mode = self._effective_mode(live)
+        expected_mode = self._text(candidate.get("mode_qrz")).upper()
+        if not (
+            live_mode == expected_mode
+            or {live_mode, expected_mode} <= {"PSK", "PSK31"}
         ):
             problems.append("MODE")
         if problems:
