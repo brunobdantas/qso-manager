@@ -461,26 +461,25 @@ class EqslQrzSyncService:
         verified: List[Dict[str, Any]],
         old_metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
-        by_logid = {
-            self._logid(row): dict(row)
-            for row in before_rows
-            if self._logid(row)
+        replacements = {
+            str(item["logid_before"]): dict(item["after"])
+            for item in verified
+            if item.get("logid_before") and item.get("after")
         }
-        for row in verified:
-            logid = self._logid(row)
-            if logid:
-                by_logid[logid] = dict(row)
-        merged = []
-        used = set()
+        merged: List[Dict[str, Any]] = []
+        replaced = set()
         for row in before_rows:
             logid = self._logid(row)
-            if logid and logid in by_logid:
-                merged.append(by_logid[logid])
-                used.add(logid)
+            if logid and logid in replacements:
+                merged.append(replacements[logid])
+                replaced.add(logid)
             else:
                 merged.append(row)
-        for logid, row in by_logid.items():
-            if logid not in used:
+
+        # Defensive path: an exact live record may be absent from an old local
+        # snapshot. Preserve it rather than dropping a successfully verified write.
+        for old_logid, row in replacements.items():
+            if old_logid not in replaced:
                 merged.append(row)
 
         metadata = {
@@ -589,7 +588,11 @@ class EqslQrzSyncService:
                     expected_fields=expected,
                 )
                 after = dict(result["after"])
-                verified_after.append(after)
+                verified_after.append({
+                    "logid_before": result["logid_before"],
+                    "logid_after": result["logid_after"],
+                    "after": after,
+                })
                 results.append({
                     "call": candidate["call"],
                     "logid_before": result["logid_before"],
