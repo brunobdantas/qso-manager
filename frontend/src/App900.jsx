@@ -77,11 +77,56 @@ function InboxPage({issues,onRefresh}){
   return <><PageHead eyebrow="CAIXA DE ENTRADA" title="Só o que exige atenção." subtitle="Ausências, divergências, duplicidades e confirmações ficam na mesma fila de trabalho." action={<Button kind="secondary" onClick={onRefresh}>Recalcular</Button>}/><div className="u-chips">{[['ALL','Tudo',issues?.total],['MISSING','Ausentes',counts.missing],['DIFFERENCE','Divergências',counts.differences],['DUPLICATE','Duplicidades',counts.duplicates],['QSL','QSL',counts.qsl]].map(x=><button key={x[0]} className={filter===x[0]?'active':''} onClick={()=>setFilter(x[0])}>{x[1]} <b>{fmt(x[2])}</b></button>)}</div><div className="u-inbox">{visible.map((x,i)=><article key={i}><i className={x.type.toLowerCase()}>{x.type==='QSL'?'✓':x.type==='MISSING'?'−':'!'}</i><div><h3>{x.call} <span>{x.band} · {x.mode}</span></h3><p>{x.date} {x.time?.slice(0,5)} · {x.message}</p><div className="u-badges">{(x.sources||[]).map(p=><Badge key={p}>{short(p)}</Badge>)}{(x.missing_in||[]).map(p=><Badge key={p} tone="warn">−{short(p)}</Badge>)}</div></div></article>)}</div>{!visible.length&&<Empty title="Fila limpa">Nenhuma ocorrência neste filtro.</Empty>}</>
 }
 
-function QslPage({qsl,onRefresh}){
+function QslPage({qsl,onRefresh,onChanged,setGlobalMessage}){
   const s=qsl?.summary||{}
-  return <><PageHead eyebrow="CENTRAL DE QSL" title="Confirmações com evidência." subtitle="eQSL Inbox e LoTW são tratados como fontes de confirmação. A data do QSO nunca é inventada como data de recebimento." action={<Button kind="secondary" onClick={onRefresh}>Atualizar análise</Button>}/><div className="u-metrics static"><div><span>Grupos confirmados</span><b>{fmt(s.matched_confirmation_groups)}</b></div><div><span>Propostas</span><b>{fmt(s.actionable_proposals)}</b></div><div><span>Sem par</span><b>{fmt(s.unmatched_evidence)}</b></div><div><span>Conflitos</span><b>{fmt(s.date_conflicts)}</b></div></div>{!qsl?.ready?<Empty title="Ainda sem evidência online">Atualize QRZ e ao menos eQSL Inbox ou LoTW.</Empty>:<div className="u-qsl-list">{(qsl.proposals||[]).map((p,i)=><article key={i}><div><h3>{p.qso?.call}</h3><p>{p.qso?.date} · {p.qso?.band} · {p.qso?.mode}</p></div><Badge tone="ok">{p.service}</Badge><div><b>{Object.entries(p.changes||{}).map(([k,v])=>`${k}=${v}`).join(' · ')}</b><small>{p.reason}</small></div></article>)}</div>}</>
-}
+  const [syncPlan,setSyncPlan]=useState(null)
+  const [syncBusy,setSyncBusy]=useState('')
+  const dateLabel=value=>{const v=String(value||'').replace(/-/g,'');return /^\\d{8}$/.test(v)?v.slice(6,8)+'/'+v.slice(4,6)+'/'+v.slice(0,4):(value||'—')}
 
+  async function analyzeEqslQrz(){
+    setSyncBusy('plan')
+    try{
+      const plan=await api('/api/product/qsl/eqsl-qrz/plan?refresh=true')
+      setSyncPlan(plan)
+      const n=plan.summary?.safe_updates||0
+      setGlobalMessage(n?'eQSL → QRZ: '+fmt(n)+' atualização(ões) segura(s) pronta(s) para revisão.':'eQSL → QRZ: nenhuma atualização segura pendente.')
+      await onRefresh()
+    }catch(e){setGlobalMessage('Erro: '+e.message)}
+    finally{setSyncBusy('')}
+  }
+
+  async function applyEqslQrz(){
+    const n=Number(syncPlan?.summary?.safe_updates||0)
+    if(!n)return
+    if(!window.confirm('Aplicar '+n+' atualização(ões) eQSL seguras no QRZ?\\n\\nO sistema fará preflight, backup, canário e validação pós-gravação. Somente EQSL_QSL_RCVD e EQSL_QSLRDATE serão alterados.'))return
+    setSyncBusy('apply')
+    try{
+      const result=await api('/api/product/qsl/eqsl-qrz/apply',{method:'POST',body:JSON.stringify({confirm:true,limit:Math.min(n,500)})})
+      const suffix=result.full_resync?'QRZ resincronizado após a gravação.':'Atualizações verificadas; uma resincronização completa do QRZ ficou pendente.'
+      setGlobalMessage('eQSL → QRZ: '+fmt(result.updated)+' atualizado(s), '+fmt(result.skipped)+' já alinhado(s). '+suffix)
+      await onChanged()
+      const plan=await api('/api/product/qsl/eqsl-qrz/plan')
+      setSyncPlan(plan)
+    }catch(e){setGlobalMessage('Erro: '+e.message)}
+    finally{setSyncBusy('')}
+  }
+
+  const ps=syncPlan?.summary||{}
+  const manualTotal=Number(ps.manual_review||0)+Number(ps.collisions||0)+Number(ps.date_conflicts||0)
+  return <><PageHead eyebrow="CENTRAL DE QSL" title="Confirmações com evidência." subtitle="eQSL Inbox e LoTW são tratados como fontes de confirmação. A data do QSO nunca é inventada como data de recebimento." action={<Button kind="secondary" onClick={onRefresh}>Atualizar análise</Button>}/>
+    <div className="u-metrics static"><div><span>Grupos confirmados</span><b>{fmt(s.matched_confirmation_groups)}</b></div><div><span>Propostas</span><b>{fmt(s.actionable_proposals)}</b></div><div><span>Sem par</span><b>{fmt(s.unmatched_evidence)}</b></div><div><span>Conflitos</span><b>{fmt(s.date_conflicts)}</b></div></div>
+    <Card title="eQSL → QRZ" subtitle="Sincronização segura das confirmações recebidas. Atualiza somente eQSL recebido e a data de recebimento no QRZ.">
+      <div className="u-eqsl-sync-head"><div><p>Critério automático: CALL + data + banda + modo compatível, diferença máxima de 2 minutos e pareamento estritamente 1:1.</p><small>Casos ambíguos, sem data explícita ou fora da janela ficam para revisão e nunca são gravados automaticamente.</small></div><Button disabled={!!syncBusy} onClick={analyzeEqslQrz}>{syncBusy==='plan'?'Atualizando fontes…':'Atualizar fontes e analisar'}</Button></div>
+      {syncPlan&&<><div className="u-metrics static"><div><span>Atualizações seguras</span><b>{fmt(ps.safe_updates)}</b></div><div><span>Novas confirmações</span><b>{fmt(ps.new_confirmations)}</b></div><div><span>Datas a alinhar</span><b>{fmt(ps.date_alignments)}</b></div><div><span>Revisão manual</span><b>{fmt(manualTotal)}</b></div></div>
+        <div className="u-eqsl-sync-meta"><span>QRZ: {dt(syncPlan.snapshot_freshness?.QRZ)}</span><span>eQSL Inbox: {dt(syncPlan.snapshot_freshness?.EQSL_INBOX)}</span></div>
+        {(syncPlan.candidates||[]).length>0?<div className="u-eqsl-sync-list">{(syncPlan.candidates||[]).slice(0,200).map((p,i)=><article key={p.logid||i}><div><b>{p.call}</b><small>{p.qso_date} · {p.time_qrz} · {p.band} · {p.mode_qrz}</small></div><Badge tone={p.kind==='NEW_CONFIRMATION'?'ok':'warn'}>{p.kind==='NEW_CONFIRMATION'?'nova QSL':'alinhar data'}</Badge><div><small>QRZ atual</small><b>{p.current_received||'—'} / {dateLabel(p.current_date)}</b></div><div><small>eQSL alvo</small><b>Y / {dateLabel(p.target_date)}</b></div></article>)}</div>:<Empty title="QRZ e eQSL alinhados">Nenhuma atualização automática segura foi encontrada.</Empty>}
+        {(syncPlan.candidates||[]).length>200&&<p className="u-muted">Mostrando os primeiros 200 de {fmt(syncPlan.candidates.length)} candidatos. A aplicação processa no máximo 500 por rodada.</p>}
+        <div className="u-eqsl-sync-actions"><Button disabled={!!syncBusy||!ps.safe_updates} onClick={applyEqslQrz}>{syncBusy==='apply'?'Aplicando e validando…':'Aplicar '+fmt(ps.safe_updates)+' atualização(ões) seguras'}</Button><span>Backup local + backup ADIF live + canário + verificação de CONTEST_ID e LoTW.</span></div>
+        {!!manualTotal&&<Notice tone="warn">{fmt(ps.manual_review)} candidato(s) fora da janela automática, {fmt(ps.collisions)} colisão(ões) e {fmt(ps.date_conflicts)} conflito(s) de data foram preservados para revisão manual.</Notice>}
+      </>}
+    </Card>
+    {!qsl?.ready?<Empty title="Ainda sem evidência online">Atualize QRZ e ao menos eQSL Inbox ou LoTW.</Empty>:<div className="u-qsl-list">{(qsl.proposals||[]).map((p,i)=><article key={i}><div><h3>{p.qso?.call}</h3><p>{p.qso?.date} · {p.qso?.band} · {p.qso?.mode}</p></div><Badge tone="ok">{p.service}</Badge><div><b>{Object.entries(p.changes||{}).map(([k,v])=>k+'='+v).join(' · ')}</b><small>{p.reason}</small></div></article>)}</div>}</>
+}
 function SourcesPage({status,onChanged,setGlobalMessage}){
   const [config,setConfig]=useState(null),[busy,setBusy]=useState('')
   const providers=status?.providers||[]
@@ -117,5 +162,5 @@ export default function App900(){
   async function syncAll(){setBusy(true);setMessage('Atualizando fontes conectadas…');try{const r=await api('/api/product/sync-all',{method:'POST',body:'{}'});const failed=(r.results||[]).filter(x=>!x.ok&&!x.skipped);setMessage(failed.length?`Atualização concluída com ${failed.length} falha(s).`:'Fontes atualizadas e workspace recalculado.');await refresh()}catch(e){setMessage('Erro: '+e.message)}finally{setBusy(false)}}
   async function refreshIssues(){try{const [issues,qsl]=await Promise.all([api('/api/product/issues?limit=500'),api('/api/product/qsl')]);setBoot(v=>({...v,issues,qsl}))}catch(e){setMessage('Erro: '+e.message)}}
   const nav=n=>setPage(n)
-  return <div className="u-app"><aside className="u-sidebar"><div className="u-brand"><div>PU<br/>2B</div><span><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></span></div><nav>{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav><div className="u-sidebar-foot"><span className={boot?'ok':''}/><div><b>{boot?'Workspace pronto':'Inicializando'}</b><small>{boot?`${fmt(boot.workspace?.summary?.logical_qsos)} QSOs lógicos`:'validando serviços'}</small></div></div></aside><header className="u-mobile-top"><div><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></div><Button small disabled={busy} onClick={syncAll}>↻</Button></header><main className="u-main">{message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}<button className="u-close" onClick={()=>setMessage('')}>×</button></Notice>}{!boot&&<div className="u-loading-screen"><div className="u-pulse">PU2BRU</div><h2>Montando seu workspace…</h2><p>Validando banco local, frontend e fontes.</p></div>}{boot&&<>{page==='overview'&&<Overview boot={boot} navigate={nav} syncAll={syncAll} busy={busy}/>} {page==='log'&&<LogPage workspace={boot.workspace}/>} {page==='inbox'&&<InboxPage issues={boot.issues} onRefresh={refreshIssues}/>} {page==='qsl'&&<QslPage qsl={boot.qsl} onRefresh={refreshIssues}/>} {page==='sources'&&<SourcesPage status={boot.status} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='tools'&&<ToolsPage workspace={boot.workspace} status={boot.status} setGlobalMessage={setMessage}/>}</>}</main><nav className="u-bottom">{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav></div>
+  return <div className="u-app"><aside className="u-sidebar"><div className="u-brand"><div>PU<br/>2B</div><span><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></span></div><nav>{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav><div className="u-sidebar-foot"><span className={boot?'ok':''}/><div><b>{boot?'Workspace pronto':'Inicializando'}</b><small>{boot?`${fmt(boot.workspace?.summary?.logical_qsos)} QSOs lógicos`:'validando serviços'}</small></div></div></aside><header className="u-mobile-top"><div><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></div><Button small disabled={busy} onClick={syncAll}>↻</Button></header><main className="u-main">{message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}<button className="u-close" onClick={()=>setMessage('')}>×</button></Notice>}{!boot&&<div className="u-loading-screen"><div className="u-pulse">PU2BRU</div><h2>Montando seu workspace…</h2><p>Validando banco local, frontend e fontes.</p></div>}{boot&&<>{page==='overview'&&<Overview boot={boot} navigate={nav} syncAll={syncAll} busy={busy}/>} {page==='log'&&<LogPage workspace={boot.workspace}/>} {page==='inbox'&&<InboxPage issues={boot.issues} onRefresh={refreshIssues}/>} {page==='qsl'&&<QslPage qsl={boot.qsl} onRefresh={refreshIssues} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='sources'&&<SourcesPage status={boot.status} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='tools'&&<ToolsPage workspace={boot.workspace} status={boot.status} setGlobalMessage={setMessage}/>}</>}</main><nav className="u-bottom">{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav></div>
 }
