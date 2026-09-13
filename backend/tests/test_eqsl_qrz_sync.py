@@ -168,7 +168,7 @@ def test_plan_blocks_duplicate_card_identity_with_conflicting_receive_dates(tmp_
 def test_qrz_exact_replace_preserves_raw_protected_fields_and_uses_proven_fetch_option():
     initial = (
         "<CALL:5>K1ABC<QSO_DATE:8>20260913<TIME_ON:6>120000"
-        "<BAND:3>15M<FREQ:6>21.074<MODE:3>FT8"
+        "<BAND:3>15M<FREQ:6>21.074<MODE:3>FT8<RST_SENT:3>+06"
         "<CONTEST_ID:7>WW-DIGI<LOTW_QSL_RCVD:1>Y<LOTW_QSLRDATE:8>20260912"
         "<EQSL_QSL_RCVD:1>N<COMMENT:11>keep me 123"
         "<APP_QRZLOG_LOGID:3>123<EOR>"
@@ -194,6 +194,7 @@ def test_qrz_exact_replace_preserves_raw_protected_fields_and_uses_proven_fetch_
             assert "<LOTW_QSL_RCVD:1>Y" in payload
             assert "<LOTW_QSLRDATE:8>20260912" in payload
             assert "<COMMENT:11>keep me 123" in payload
+            assert "<RST_SENT:3>+06" in payload
             assert "<EQSL_QSL_RCVD:1>Y" in payload
             assert "<EQSL_QSLRDATE:8>20260913" in payload
             current["adif"] = payload.replace(
