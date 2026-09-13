@@ -19,6 +19,7 @@ from __future__ import annotations
 from collections import defaultdict
 from datetime import datetime, timezone
 from pathlib import Path
+import time
 from typing import Any, Callable, Dict, Iterable, List, Optional, Tuple
 
 from ..adapters.cloud_logs import CloudProviderError
@@ -33,6 +34,7 @@ class EqslQrzSyncService:
     MAX_DELTA_SECONDS = 120
     REVIEW_DELTA_SECONDS = 300
     MAX_APPLY = 500
+    INTER_QSO_DELAY_SECONDS = 0.70
 
     PROTECTED_FIELDS = (
         "CALL",
@@ -557,6 +559,7 @@ class EqslQrzSyncService:
                         f"snapshot={expected_received or '(vazio)'}/{expected_date or '(vazia)'}"
                     )
                 preflight.append((candidate, fetched))
+                time.sleep(self.INTER_QSO_DELAY_SECONDS)
 
             if not preflight:
                 return {
@@ -602,6 +605,7 @@ class EqslQrzSyncService:
                     "target_date": candidate["target_date"],
                     "canary": position == 0,
                 })
+                time.sleep(self.INTER_QSO_DELAY_SECONDS)
 
             # Prefer a complete remote refresh. If QRZ is temporarily unable to
             # deliver the whole log, preserve the exact verified records locally
