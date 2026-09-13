@@ -187,21 +187,21 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             "status": "Chave e acesso ao logbook QRZ validados.",
         }
 
-    _RAW_FIELD_RE = re.compile(r"<([^:>\\s]+):(\\d+)(?::[^>]*)?>", re.I)
+    _RAW_FIELD_RE = re.compile(r"<([^:>\s]+):(\d+)(?::[^>]*)?>", re.I)
 
     @classmethod
     def _single_record_raw(cls, adif: str) -> str:
         """Return exactly one raw ADIF record while preserving field bytes/order."""
         text = cls._decode_adif(adif)
-        header = re.search(r"<EOH\\s*>", text, flags=re.I)
+        header = re.search(r"<EOH\s*>", text, flags=re.I)
         if header:
             text = text[header.end():]
-        end = re.search(r"<EOR\\s*>", text, flags=re.I)
+        end = re.search(r"<EOR\s*>", text, flags=re.I)
         if not end:
             raise CloudProviderError("QRZ exact FETCH returned ADIF without <EOR>")
         record = text[:end.end()]
         tail = text[end.end():].strip()
-        if re.search(r"<EOR\\s*>", tail, flags=re.I):
+        if re.search(r"<EOR\s*>", tail, flags=re.I):
             raise CloudProviderError("QRZ exact FETCH returned more than one ADIF record")
         return record
 
@@ -213,7 +213,7 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         because QRZ owns that identifier.
         """
         record = cls._single_record_raw(adif)
-        eor = re.search(r"<EOR\\s*>", record, flags=re.I)
+        eor = re.search(r"<EOR\s*>", record, flags=re.I)
         body = record[:eor.start()]
         drop = {"APP_QRZLOG_LOGID", *(str(k).upper() for k in changes)}
         out: List[str] = []
