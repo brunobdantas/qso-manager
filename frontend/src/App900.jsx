@@ -81,7 +81,7 @@ function QslPage({qsl,onRefresh,onChanged,setGlobalMessage}){
   const s=qsl?.summary||{}
   const [syncPlan,setSyncPlan]=useState(null)
   const [syncBusy,setSyncBusy]=useState('')
-  const dateLabel=value=>{const v=String(value||'').replace(/-/g,'');return /^\\d{8}$/.test(v)?v.slice(6,8)+'/'+v.slice(4,6)+'/'+v.slice(0,4):(value||'—')}
+  const dateLabel=value=>{const v=String(value||'').replace(/-/g,'');return /^\d{8}$/.test(v)?v.slice(6,8)+'/'+v.slice(4,6)+'/'+v.slice(0,4):(value||'—')}
 
   async function analyzeEqslQrz(){
     setSyncBusy('plan')
