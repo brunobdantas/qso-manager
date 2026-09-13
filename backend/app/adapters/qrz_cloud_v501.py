@@ -302,9 +302,14 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
 
         result = self._post("INSERT", OPTION="REPLACE", ADIF=payload)
         result_code = str(result.get("RESULT") or "").upper()
+        result_count = str(result.get("COUNT") or "").strip()
         if result_code and result_code not in {"OK", "REPLACE"}:
             raise CloudProviderError(
                 f"QRZ INSERT/REPLACE returned unexpected RESULT={result_code}"
+            )
+        if result_count not in {"", "1"}:
+            raise CloudProviderError(
+                f"QRZ INSERT/REPLACE returned unexpected COUNT={result_count}"
             )
 
         new_logid = str(result.get("LOGID") or before["logid"] or logid).strip()
