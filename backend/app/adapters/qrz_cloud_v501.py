@@ -264,6 +264,7 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         logid: str,
         changes: Dict[str, Any],
         protected_fields: Iterable[str] = (),
+        expected_fields: Dict[str, Any] | None = None,
     ) -> Dict[str, Any]:
         """Apply a minimal QRZ REPLACE and verify the exact live record afterwards.
 
@@ -278,6 +279,20 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             )
 
         before = self.fetch_exact(logid)
+        expected_fields = {
+            str(name).upper(): value for name, value in dict(expected_fields or {}).items()
+        }
+        changed_before_write = {}
+        for name, expected in expected_fields.items():
+            actual = before["record"].get(name)
+            if str(actual or "").strip().upper() != str(expected or "").strip().upper():
+                changed_before_write[name] = {"expected": expected, "actual": actual}
+        if changed_before_write:
+            raise CloudProviderError(
+                "QRZ live record changed before REPLACE: "
+                + ", ".join(sorted(changed_before_write))
+            )
+
         protected = [str(name).upper() for name in protected_fields]
         before_values = {name: before["record"].get(name) for name in protected}
         payload = self._replace_raw_fields(before["raw_adif"], normalized)
