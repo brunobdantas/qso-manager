@@ -55,9 +55,12 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             for key, values in parse_qs(raw, keep_blank_values=True).items()
         }
 
-        # Some QRZ responses have historically been inconsistent around the
-        # ADIF value encoding. Recover the raw ADIF value if parse_qs did not.
-        if (not parsed.get("ADIF")) and re.search(r"(?:^|&)ADIF=", raw, flags=re.I):
+        # Some QRZ responses contain literal ADIF rather than a normal
+        # application/x-www-form-urlencoded value. Prefer the raw ADIF slice
+        # whenever it is present: parse_qs would otherwise turn a literal '+'
+        # (for example RST +06) into a space and make a supposedly minimal
+        # REPLACE rewrite unrelated fields.
+        if re.search(r"(?:^|&)ADIF=", raw, flags=re.I):
             match = re.search(
                 r"(?:^|&)ADIF=(.*?)(?=&(?:RESULT|REASON|LOGIDS?|COUNT|DATA)=|$)",
                 raw,
