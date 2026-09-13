@@ -98,7 +98,7 @@ function QslPage({qsl,onRefresh,onChanged,setGlobalMessage}){
   async function applyEqslQrz(){
     const n=Number(syncPlan?.summary?.safe_updates||0)
     if(!n)return
-    if(!window.confirm('Aplicar '+n+' atualização(ões) eQSL seguras no QRZ?\\n\\nO sistema fará preflight, backup, canário e validação pós-gravação. Somente EQSL_QSL_RCVD e EQSL_QSLRDATE serão alterados.'))return
+    if(!window.confirm('Aplicar '+n+' atualização(ões) eQSL seguras no QRZ?\n\nO sistema fará preflight, backup, canário e validação pós-gravação. Somente EQSL_QSL_RCVD e EQSL_QSLRDATE serão alterados.'))return
     setSyncBusy('apply')
     try{
       const result=await api('/api/product/qsl/eqsl-qrz/apply',{method:'POST',body:JSON.stringify({confirm:true,limit:Math.min(n,500)})})
