@@ -165,6 +165,16 @@ def test_plan_blocks_duplicate_card_identity_with_conflicting_receive_dates(tmp_
     assert plan["summary"]["date_conflicts"] == 1
 
 
+def test_qrz_response_parser_preserves_literal_plus_inside_raw_adif():
+    raw = (
+        "RESULT=OK&COUNT=1&ADIF="
+        "<CALL:5>K1ABC<RST_SENT:3>+06<COMMENT:7>A+B C D<EOR>"
+    )
+    parsed = QRZCloudAdapterV501._parse_response(raw)
+    assert "<RST_SENT:3>+06" in parsed["ADIF"]
+    assert "<COMMENT:7>A+B C D" in parsed["ADIF"]
+
+
 def test_qrz_exact_replace_preserves_raw_protected_fields_and_uses_proven_fetch_option():
     initial = (
         "<CALL:5>K1ABC<QSO_DATE:8>20260913<TIME_ON:6>120000"
@@ -376,6 +386,26 @@ def test_apply_preflights_backs_up_uses_canary_and_resyncs_snapshot(tmp_path: Pa
     assert saved_by_id["501"]["CONTEST_ID"] == "WW-DIGI"
     assert saved_by_id["502"]["EQSL_QSLRDATE"] == "20260913"
     assert fake.closed is True
+
+
+def test_verified_snapshot_fallback_replaces_old_logid_without_duplicate(tmp_path: Path):
+    before = [qrz("K9MOVE", "12:00:00", "701")]
+    service = build_service(tmp_path, before, [eqsl("K9MOVE", "12:00:00", "20260913")])
+    after = deepcopy(before[0])
+    after["APP_QRZLOG_LOGID"] = "799"
+    after["EQSL_QSL_RCVD"] = "Y"
+    after["EQSL_QSLRDATE"] = "20260913"
+
+    service._merge_verified_snapshot(
+        before,
+        [{"logid_before": "701", "logid_after": "799", "after": after}],
+        {"coverage": "API_FULL_SYNC"},
+    )
+
+    saved = service.snapshots.load("QRZ")["records"]
+    assert len(saved) == 1
+    assert saved[0]["APP_QRZLOG_LOGID"] == "799"
+    assert saved[0]["EQSL_QSLRDATE"] == "20260913"
 
 
 def test_apply_is_dry_run_by_default(tmp_path: Path):
