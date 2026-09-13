@@ -184,6 +184,143 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             "status": "Chave e acesso ao logbook QRZ validados.",
         }
 
+    _RAW_FIELD_RE = re.compile(r"<([^:>\\s]+):(\\d+)(?::[^>]*)?>", re.I)
+
+    @classmethod
+    def _single_record_raw(cls, adif: str) -> str:
+        """Return exactly one raw ADIF record while preserving field bytes/order."""
+        text = cls._decode_adif(adif)
+        header = re.search(r"<EOH\\s*>", text, flags=re.I)
+        if header:
+            text = text[header.end():]
+        end = re.search(r"<EOR\\s*>", text, flags=re.I)
+        if not end:
+            raise CloudProviderError("QRZ exact FETCH returned ADIF without <EOR>")
+        record = text[:end.end()]
+        tail = text[end.end():].strip()
+        if re.search(r"<EOR\\s*>", tail, flags=re.I):
+            raise CloudProviderError("QRZ exact FETCH returned more than one ADIF record")
+        return record
+
+    @classmethod
+    def _replace_raw_fields(cls, adif: str, changes: Dict[str, Any]) -> str:
+        """Preserve the live QRZ ADIF byte-for-byte except selected fields.
+
+        APP_QRZLOG_LOGID is intentionally omitted from the REPLACE payload
+        because QRZ owns that identifier.
+        """
+        record = cls._single_record_raw(adif)
+        eor = re.search(r"<EOR\\s*>", record, flags=re.I)
+        body = record[:eor.start()]
+        drop = {"APP_QRZLOG_LOGID", *(str(k).upper() for k in changes)}
+        out: List[str] = []
+        pos = 0
+
+        while True:
+            match = cls._RAW_FIELD_RE.search(body, pos)
+            if not match:
+                out.append(body[pos:])
+                break
+            out.append(body[pos:match.start()])
+            name = match.group(1).upper()
+            size = int(match.group(2))
+            value_end = match.end() + size
+            if value_end > len(body):
+                raise CloudProviderError(f"QRZ ADIF is truncated in field {name}")
+            if name not in drop:
+                out.append(body[match.start():value_end])
+            pos = value_end
+
+        for name, value in changes.items():
+            if value is None:
+                continue
+            text = str(value)
+            out.append(f"<{str(name).upper()}:{len(text)}>{text}")
+        out.append("<EOR>")
+        return "".join(out)
+
+    def fetch_exact(self, logid: str) -> Dict[str, Any]:
+        """Fetch one QRZ QSO by LOGID using the request proven against production."""
+        target = str(logid or "").strip()
+        if not target:
+            raise CloudProviderError("QRZ LOGID is required for exact fetch")
+        data = self._post("FETCH", OPTION=f"LOGIDS:{target},TYPE:ADIF")
+        raw = self._single_record_raw(data.get("ADIF", ""))
+        records, errors = ADIFParser().parse(raw)
+        if len(records) != 1:
+            detail = "; ".join(errors[:3])
+            raise CloudProviderError(
+                f"QRZ exact FETCH {target} returned {len(records)} records"
+                + (f": {detail}" if detail else "")
+            )
+        record = records[0]
+        live_id = str(record.get("APP_QRZLOG_LOGID") or record.get("QSO_ID") or "").strip()
+        if live_id and live_id != target:
+            raise CloudProviderError(f"QRZ exact FETCH returned LOGID {live_id}, expected {target}")
+        return {"logid": live_id or target, "record": record, "raw_adif": raw}
+
+    def replace_exact_fields(
+        self,
+        logid: str,
+        changes: Dict[str, Any],
+        protected_fields: Iterable[str] = (),
+    ) -> Dict[str, Any]:
+        """Apply a minimal QRZ REPLACE and verify the exact live record afterwards.
+
+        This method is deliberately narrower than a generic update API.  It is
+        intended for audited maintenance flows such as eQSL confirmation sync.
+        """
+        allowed = {"EQSL_QSL_RCVD", "EQSL_QSLRDATE"}
+        normalized = {str(k).upper(): v for k, v in dict(changes or {}).items()}
+        if not normalized or not set(normalized).issubset(allowed):
+            raise CloudProviderError(
+                "QRZ safe replace accepts only EQSL_QSL_RCVD and EQSL_QSLRDATE"
+            )
+
+        before = self.fetch_exact(logid)
+        protected = [str(name).upper() for name in protected_fields]
+        before_values = {name: before["record"].get(name) for name in protected}
+        payload = self._replace_raw_fields(before["raw_adif"], normalized)
+
+        result = self._post("INSERT", OPTION="REPLACE", ADIF=payload)
+        result_code = str(result.get("RESULT") or "").upper()
+        if result_code and result_code not in {"OK", "REPLACE"}:
+            raise CloudProviderError(
+                f"QRZ INSERT/REPLACE returned unexpected RESULT={result_code}"
+            )
+
+        new_logid = str(result.get("LOGID") or before["logid"] or logid).strip()
+        after = self.fetch_exact(new_logid)
+
+        for name, expected in normalized.items():
+            actual = after["record"].get(name)
+            if str(actual or "").strip().upper() != str(expected or "").strip().upper():
+                raise CloudProviderError(
+                    f"QRZ post-write verification failed for {name}: "
+                    f"expected {expected!r}, got {actual!r}"
+                )
+
+        changed_protected = {}
+        for name, expected in before_values.items():
+            actual = after["record"].get(name)
+            if actual != expected:
+                changed_protected[name] = {"before": expected, "after": actual}
+        if changed_protected:
+            raise CloudProviderError(
+                "QRZ changed protected fields during REPLACE: "
+                + ", ".join(sorted(changed_protected))
+            )
+
+        return {
+            "ok": True,
+            "logid_before": before["logid"],
+            "logid_after": after["logid"],
+            "before": before["record"],
+            "after": after["record"],
+            "changes": normalized,
+            "protected_fields": protected,
+        }
+
     def _parse_page(self, data: Dict[str, str]) -> Tuple[List[Dict[str, Any]], List[str]]:
         adif = self._decode_adif(data.get("ADIF", ""))
         return ADIFParser().parse(adif)
