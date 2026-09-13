@@ -130,6 +130,8 @@ def _run_self_test() -> int:
             "/api/advanced/compare",
             "/api/product/bootstrap",
             "/api/product/diagnostics",
+            "/api/product/qsl/eqsl-qrz/plan",
+            "/api/product/qsl/eqsl-qrz/apply",
         }
         if not required.issubset(paths):
             logging.error("Missing routes: %s", sorted(required - paths))
