@@ -10,6 +10,7 @@ import httpx
 
 from .cloud_logs import CloudLogAdapter, CloudProviderError, record_to_adif
 from ..adif.parser import ADIFParser
+from ..core.version import __version__
 
 
 class HRDLogCloudAdapter(CloudLogAdapter):
@@ -56,7 +57,7 @@ class HRDLogCloudAdapter(CloudLogAdapter):
             },
             headers={
                 "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": "PU2BRU-QSO-Manager/8.0",
+                "User-Agent": f"PU2BRU-QSO-Manager/{__version__}",
             },
         )
         response.raise_for_status()
@@ -144,7 +145,7 @@ class EQSLInboxAdapter(CloudLogAdapter):
     provider = "EQSL_INBOX"
     base_url = "https://www.eqsl.cc/qslcard/"
     capabilities = {"read": True, "add": False, "update": False, "delete": False}
-    USER_AGENT = "PU2BRU-QSO-Manager/9.0 (PU2BRU)"
+    USER_AGENT = f"PU2BRU-QSO-Manager/{__version__} (PU2BRU)"
 
     def _params(self) -> Dict[str, str]:
         username = str(self.credentials.get("username") or "").strip().upper()
