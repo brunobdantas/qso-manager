@@ -134,7 +134,7 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "installer\qso-manager.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup.exe")) {
+          if (-not (Test-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe")) {
             throw "Installer output not found"
           }
 
@@ -145,7 +145,7 @@ jobs:
         run: |
           $installDir = Join-Path $env:TEMP "PU2BRU-QSO-Manager-installed"
           if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
-          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup.exe"
+          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe"
           $install = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Silent installer failed with exit code $($install.ExitCode)" }
           $installedExe = Join-Path $installDir "PU2BRU-QSO-Manager.exe"
@@ -176,6 +176,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: PU2BRU-QSO-Manager-Windows-Setup
-          path: dist-installer/PU2BRU-QSO-Manager-Setup.exe
+          path: dist-installer/PU2BRU-QSO-Manager-Setup-v1.0.0.exe
           if-no-files-found: error
           retention-days: 30
