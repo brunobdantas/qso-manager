@@ -1,4 +1,4 @@
-"""Static release gate for QSO Manager v9 product parity and entry points."""
+"""Static release gate for PU2BRU QSO Manager production contracts."""
 from __future__ import annotations
 
 import json
@@ -24,16 +24,20 @@ def main() -> int:
     mobile_main = read("mobile/src/main.jsx")
     mobile = read("mobile/src/App900.jsx")
     backend = read("backend/app/main.py")
+    backend_version = read("backend/app/core/version.py")
+    frontend_package = json.loads(read("frontend/package.json"))
     product_api = read("backend/app/api/product.py")
     launcher = read("installer/windows_launcher.py")
     installer = read("installer/qso-manager.iss")
     mobile_package = json.loads(read("mobile/package.json"))
 
-    require("App900.jsx" in desktop_main, "desktop must boot App900")
-    require("unified900.css" in desktop_main, "desktop must use the v9 unified design system")
-    require("App900.jsx" in mobile_main, "mobile must boot App900")
-    require("unified900.css" in mobile_main, "mobile must use the v9 unified design system")
-    require(f'version="{VERSION}"' in backend, "backend FastAPI version must match product contract")
+    require("App900.jsx" in desktop_main, "desktop must boot the current unified app")
+    require("unified900.css" in desktop_main, "desktop must use the unified design system")
+    require("App900.jsx" in mobile_main, "mobile must boot the current companion app")
+    require("unified900.css" in mobile_main, "mobile must use the unified design system")
+    require(f'__version__ = "{VERSION}"' in backend_version, "canonical backend version must match product contract")
+    require("version=__version__" in backend, "FastAPI must use the canonical backend version")
+    require(frontend_package.get("version") == VERSION, "desktop package version must match product contract")
     require(f'#define MyAppVersion "{VERSION}"' in installer, "Windows installer version must match product contract")
     require(mobile_package.get("version") == VERSION, "Android package version must match product contract")
     require("--gui-smoke-test" in launcher, "Windows launcher must expose an end-to-end GUI smoke test")
@@ -47,6 +51,15 @@ def main() -> int:
     for provider in CONTRACT["providers"]:
         require(provider in desktop, f"desktop missing provider {provider}")
         require(provider in mobile, f"mobile missing provider {provider}")
+
+    windows = CONTRACT["platforms"]["windows"]
+    android = CONTRACT["platforms"]["android"]
+    require(windows.get("stage") == "production", "Windows must be declared production")
+    require(windows.get("eqsl_qrz_safe_sync") is True, "Windows must expose safe eQSL -> QRZ sync")
+    require(android.get("stage") == "preview", "Android must remain explicitly preview")
+    require(android.get("eqsl_qrz_safe_sync") is False, "Android must not claim QRZ mutation parity")
+    require("/api/product/qsl/eqsl-qrz/plan" in desktop, "desktop missing eQSL -> QRZ analysis")
+    require("/api/product/qsl/eqsl-qrz/apply" in desktop, "desktop missing eQSL -> QRZ apply")
 
     markers = {
         "advanced_multi_adif_compare": ("/api/advanced/compare", "matchRecords"),
@@ -62,7 +75,7 @@ def main() -> int:
         require(desktop_marker in desktop, f"desktop missing {capability}")
         require(mobile_marker in mobile + storage, f"mobile missing {capability}")
 
-    print(f"QSO Manager {VERSION}: product parity contract passed")
+    print(f"QSO Manager {VERSION}: production capability contract passed")
     print(f"Navigation: {', '.join(x['id'] for x in CONTRACT['navigation'])}")
     print(f"Providers: {', '.join(CONTRACT['providers'])}")
     return 0
