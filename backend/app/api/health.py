@@ -6,6 +6,7 @@ from sqlalchemy import text
 
 from ..db.database import get_db
 from ..core.config import settings
+from ..core.version import __version__
 from ..schemas.schemas import HealthResponse
 
 
@@ -23,8 +24,8 @@ def health_check(db: Session = Depends(get_db)):
         db_status = f"error: {str(e)}"
     
     return HealthResponse(
-        status="healthy",
-        version="1.0.0",
+        status="healthy" if db_status == "connected" else "degraded",
+        version=__version__,
         database=db_status,
         qrz_enabled=settings.qrz_enabled,
         environment=settings.environment,
