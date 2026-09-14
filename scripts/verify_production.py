@@ -45,7 +45,7 @@ def main() -> int:
 
     sync = read("backend/app/services/eqsl_qrz_sync_service.py")
     for marker in (
-        "strict one-to-one",
+        "strict_one_to_one",
         "CONTEST_ID",
         "LOTW_QSL_RCVD",
         "fetch_exact",
