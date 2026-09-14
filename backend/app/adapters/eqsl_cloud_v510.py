@@ -16,6 +16,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlparse
 
 from .cloud_logs import ADIFParser, CloudProviderError, EQSLCloudAdapter
+from ..core.version import __version__
 
 
 class _HrefParser(HTMLParser):
@@ -34,7 +35,7 @@ class _HrefParser(HTMLParser):
 class EQSLCloudAdapterV510(EQSLCloudAdapter):
     """Download the complete eQSL OutBox from the generated ADIF file."""
 
-    USER_AGENT = "PU2BRU-QSO-Manager/5.1 (PU2BRU)"
+    USER_AGENT = f"PU2BRU-QSO-Manager/{__version__} (PU2BRU)"
 
     @staticmethod
     def _looks_html(response, body: str) -> bool:
