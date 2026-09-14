@@ -30,7 +30,7 @@ async function qrzPost(c,action,option){
   if(!key)throw new Error('QRZ Logbook API Key não configurada')
   const payload={KEY:key,ACTION:String(action||'').toUpperCase()}
   if(option)payload.OPTION=option
-  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/8.0.1 (PU2BRU)'})
+  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/1.0.0 (PU2BRU)'})
   const data=parsedQuery(r.text)
   qrzError(data,payload.ACTION)
   return data
@@ -145,7 +145,7 @@ export async function fetchWRL(c){
     const params={limit:100}
     if(cursor)params.cursor=cursor
     if(c.logbook_id)params.logbookId=c.logbook_id
-    const r=await get('https://api.worldradioleague.com/v1/contacts',params,{Authorization:'Bearer '+c.api_key,'User-Agent':'PU2BRU-QSO-Manager/8.0'})
+    const r=await get('https://api.worldradioleague.com/v1/contacts',params,{Authorization:'Bearer '+c.api_key,'User-Agent':'PU2BRU-QSO-Manager/1.0.0'})
     let payload
     try{payload=JSON.parse(r.text)}catch{throw new Error('WRL retornou resposta inválida')}
     if(payload.error)throw new Error(payload.error.message||'Erro WRL')
@@ -206,7 +206,7 @@ export async function fetchLoTW(c){
 
 export async function pushHRDLog(c,record){
   if(!c?.callsign||!c?.upload_code)throw new Error('HRDLog requer Indicativo + Upload Code')
-  const r=await postForm('https://robot.hrdlog.net/NewEntry.aspx',{Code:c.upload_code,Callsign:c.callsign,ADIFData:recordToAdif(record)},{'User-Agent':'PU2BRU-QSO-Manager/8.0'})
+  const r=await postForm('https://robot.hrdlog.net/NewEntry.aspx',{Code:c.upload_code,Callsign:c.callsign,ADIFData:recordToAdif(record)},{'User-Agent':'PU2BRU-QSO-Manager/1.0.0'})
   const low=r.text.toLowerCase()
   if(low.includes('<insert>1'))return {ok:true,status:'inserted'}
   if(low.includes('<insert>0'))return {ok:true,status:'duplicate'}
