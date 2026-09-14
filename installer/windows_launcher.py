@@ -141,7 +141,7 @@ def _run_self_test() -> int:
             return 14
         from app.services.v9_product_service import V9ProductService
         diagnostic = V9ProductService().diagnostics()
-        if diagnostic.get("version") != "1.0.0" or not diagnostic.get("capability_parity"):
+        if diagnostic.get("version") != "1.0.0" or not diagnostic.get("windows_production_ready"):
             return 16
         config = _make_uvicorn_config(app, DEFAULT_PORT)
         if config.log_config is not None:
