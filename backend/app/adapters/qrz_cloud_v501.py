@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote_plus
 import httpx
 
 from .cloud_logs import ADIFParser, CloudProviderError, QRZCloudAdapter
+from ..core.version import __version__
 
 
 class QRZCloudAdapterV501(QRZCloudAdapter):
