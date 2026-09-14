@@ -136,6 +136,23 @@ def test_plan_is_strict_one_to_one_and_separates_manual_cases(tmp_path: Path):
     assert all(row["call"] != "K1NODATE" for row in plan["candidates"])
 
 
+def test_manual_review_excludes_near_match_already_aligned(tmp_path: Path):
+    qrz_rows = [
+        qrz("K1DONE", "12:00:00", "150", received="Y", received_date="20260913"),
+        qrz("K1TODO", "13:00:00", "151", received="N"),
+    ]
+    eqsl_rows = [
+        eqsl("K1DONE", "12:03:00", "20260913"),
+        eqsl("K1TODO", "13:03:00", "20260913"),
+    ]
+    service = build_service(tmp_path, qrz_rows, eqsl_rows)
+
+    plan = service.plan()
+
+    assert {row["call"] for row in plan["manual_review"]} == {"K1TODO"}
+    assert plan["manual_review"][0]["current_received"] == "N"
+    assert plan["manual_review"][0]["target_date"] == "20260913"
+
 def test_plan_collapses_exact_duplicate_cards_with_same_receive_date(tmp_path: Path):
     qrz_rows = [qrz("K2DUP", "12:00:00", "201")]
     eqsl_rows = [
