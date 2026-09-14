@@ -1,13 +1,31 @@
 {
   "product": "PU2BRU QSO Manager",
-  "version": "9.0.0",
+  "version": "1.0.0",
   "navigation": [
-    {"id": "overview", "label": "Visão geral"},
-    {"id": "log", "label": "Log"},
-    {"id": "inbox", "label": "Pendências"},
-    {"id": "qsl", "label": "QSL"},
-    {"id": "sources", "label": "Fontes"},
-    {"id": "tools", "label": "Ferramentas"}
+    {
+      "id": "overview",
+      "label": "Visão geral"
+    },
+    {
+      "id": "log",
+      "label": "Log"
+    },
+    {
+      "id": "inbox",
+      "label": "Pendências"
+    },
+    {
+      "id": "qsl",
+      "label": "QSL"
+    },
+    {
+      "id": "sources",
+      "label": "Fontes"
+    },
+    {
+      "id": "tools",
+      "label": "Ferramentas"
+    }
   ],
   "capabilities": [
     "sync_online_sources",
@@ -18,6 +36,7 @@
     "duplicate_detection",
     "qsl_evidence_eqsl",
     "qsl_evidence_lotw",
+    "eqsl_qrz_safe_sync",
     "advanced_multi_adif_compare",
     "local_hrd_adif_source",
     "hrdlog_adif_bootstrap",
@@ -27,9 +46,29 @@
     "activity_history",
     "credential_security"
   ],
-  "providers": ["QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD"],
+  "providers": [
+    "QRZ",
+    "WRL",
+    "CLUBLOG",
+    "EQSL",
+    "EQSL_INBOX",
+    "LOTW",
+    "HRDLOG",
+    "HRD"
+  ],
   "platforms": {
-    "windows": {"all_capabilities": true, "hrd_local_mode": "ADIF/local workspace"},
-    "android": {"all_capabilities": true, "hrd_local_mode": "ADIF import"}
+    "windows": {
+      "stage": "production",
+      "all_core_capabilities": true,
+      "eqsl_qrz_safe_sync": true,
+      "hrd_local_mode": "ADIF/local workspace"
+    },
+    "android": {
+      "stage": "preview",
+      "all_core_capabilities": false,
+      "eqsl_qrz_safe_sync": false,
+      "hrd_local_mode": "ADIF import",
+      "note": "Companion app; remote QRZ mutation is intentionally disabled."
+    }
   }
 }
