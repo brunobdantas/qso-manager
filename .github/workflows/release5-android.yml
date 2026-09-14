@@ -1,8 +1,8 @@
-name: Release 5 Android APK
+name: Build · Android Preview
 
 on:
   push:
-    branches: [main, release/v9-unified-stable]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -37,8 +37,11 @@ jobs:
         working-directory: mobile
         run: npm test
 
-      - name: Verify product parity contract
+      - name: Verify product capability contract
         run: python scripts/verify_product_parity.py
+
+      - name: Production metadata gate
+        run: python scripts/verify_production.py
 
       - name: Build mobile web bundle
         working-directory: mobile
@@ -57,8 +60,8 @@ jobs:
           from pathlib import Path
           p = Path("mobile/android/app/build.gradle")
           text = p.read_text()
-          text = text.replace("versionCode 1", "versionCode 90000")
-          text = text.replace('versionName "1.0"', 'versionName "9.0.0"')
+          text = text.replace("versionCode 1", "versionCode 10000")
+          text = text.replace('versionName "1.0"', 'versionName "1.0.0"')
           p.write_text(text)
           PY
 
@@ -72,14 +75,14 @@ jobs:
           APK="mobile/android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           mkdir -p dist-android
-          cp "$APK" "dist-android/PU2BRU-QSO-Manager-v9.0.0-Android.apk"
-          ls -lh dist-android/PU2BRU-QSO-Manager-v9.0.0-Android.apk
-          sha256sum dist-android/PU2BRU-QSO-Manager-v9.0.0-Android.apk
+          cp "$APK" "dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk"
+          ls -lh dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
+          sha256sum dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: PU2BRU-QSO-Manager-Android
-          path: dist-android/PU2BRU-QSO-Manager-v9.0.0-Android.apk
+          path: dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
           if-no-files-found: error
           retention-days: 30
