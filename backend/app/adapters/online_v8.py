@@ -132,11 +132,19 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
 
 
 class EQSLInboxAdapter(CloudLogAdapter):
-    """Read the eQSL Inbox/Archive as confirmation evidence."""
+    """Read the complete eQSL Inbox/Archive as confirmation evidence.
+
+    DownloadInbox.cfm returns an HTML control page that contains links to a
+    generated .ADI/.TXT file.  Parsing that HTML as ADIF can create a bogus
+    one-record snapshot because HTML markup may accidentally resemble ADIF
+    tags.  Treat HTML strictly as a control page and parse only the generated
+    download file.
+    """
 
     provider = "EQSL_INBOX"
     base_url = "https://www.eqsl.cc/qslcard/"
     capabilities = {"read": True, "add": False, "update": False, "delete": False}
+    USER_AGENT = "PU2BRU-QSO-Manager/9.0 (PU2BRU)"
 
     def _params(self) -> Dict[str, str]:
         username = str(self.credentials.get("username") or "").strip().upper()
@@ -154,43 +162,145 @@ class EQSLInboxAdapter(CloudLogAdapter):
         return params
 
     @staticmethod
+    def _looks_html(response, body: str) -> bool:
+        content_type = str(response.headers.get("content-type") or "").lower()
+        sample = body[:2000].lower()
+        return (
+            "text/html" in content_type
+            or "<html" in sample
+            or "<body" in sample
+            or "<!doctype" in sample
+        )
+
+    @staticmethod
+    def _reported_count(body: str) -> Optional[int]:
+        clean = re.sub(r"<[^>]+>", " ", html.unescape(body))
+        clean = re.sub(r"\s+", " ", clean)
+        for pattern in (
+            r"there\s+were\s+([0-9][0-9.,]*)\s+records?",
+            r"([0-9][0-9.,]*)\s+records?\s+(?:were\s+)?(?:built|generated|found)",
+        ):
+            match = re.search(pattern, clean, flags=re.I)
+            if match:
+                digits = re.sub(r"\D", "", match.group(1))
+                if digits:
+                    return int(digits)
+        return None
+
+    @staticmethod
     def _hrefs(body: str) -> List[str]:
-        return re.findall(
-            r'href=["\']([^"\']+\.(?:adi|adif|txt)(?:\?[^"\']*)?)["\']',
+        hrefs = re.findall(
+            r'href\s*=\s*["\']([^"\']+)["\']',
             html.unescape(body),
             flags=re.I,
         )
+        ranked = []
+        seen = set()
+        for href in hrefs:
+            href = str(href or "").strip()
+            if not href or href in seen:
+                continue
+            seen.add(href)
+            lower = href.split("?", 1)[0].lower()
+            if lower.endswith((".adi", ".adif")):
+                ranked.append((0, href))
+            elif lower.endswith(".txt"):
+                ranked.append((1, href))
+        ranked.sort(key=lambda item: item[0])
+        return [href for _rank, href in ranked]
+
+    @staticmethod
+    def _validate_count(records: List[Dict[str, Any]], expected: Optional[int]) -> None:
+        if expected is not None and len(records) != expected:
+            raise CloudProviderError(
+                f"Download eQSL Inbox incompleto: a página informa {expected} registros, "
+                f"mas o arquivo ADIF contém {len(records)}. O snapshot anterior foi preservado."
+            )
 
     def _fetch(self) -> Dict[str, Any]:
-        response = self.client.get(urljoin(self.base_url, "DownloadInbox.cfm"), params=self._params())
+        response = self.client.get(
+            urljoin(self.base_url, "DownloadInbox.cfm"),
+            params=self._params(),
+            headers={"User-Agent": self.USER_AGENT},
+        )
         response.raise_for_status()
         body = response.text or ""
-        records, errors = ADIFParser().parse(body)
-        if records:
-            return {"records": records, "errors": errors}
-        for href in self._hrefs(body):
-            downloaded = self.client.get(urljoin(str(response.url), href))
-            if not downloaded.is_success:
-                continue
-            records, errors = ADIFParser().parse(downloaded.text)
-            if records:
-                return {"records": records, "errors": errors}
-        clean = re.sub(r"<[^>]+>", " ", html.unescape(body))
-        clean = re.sub(r"\s+", " ", clean).strip()
-        raise CloudProviderError("eQSL Inbox did not return ADIF" + (f": {clean[:300]}" if clean else ""))
+        expected = self._reported_count(body)
+
+        if self._looks_html(response, body):
+            clean = re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html.unescape(body))).strip()
+            lowered = clean.lower()
+            if "not yet logged in" in lowered or ("invalid" in lowered and "password" in lowered):
+                raise CloudProviderError("eQSL recusou as credenciais para download do Inbox")
+
+            diagnostics = []
+            for href in self._hrefs(body):
+                link = urljoin(str(response.url), href)
+                downloaded = self.client.get(
+                    link,
+                    headers={"User-Agent": self.USER_AGENT},
+                )
+                if not downloaded.is_success:
+                    diagnostics.append(f"{href}: HTTP {downloaded.status_code}")
+                    continue
+                records, errors = ADIFParser().parse(html.unescape(downloaded.text or ""))
+                if not records:
+                    diagnostics.append(f"{href}: 0 registros")
+                    continue
+                self._validate_count(records, expected)
+                return {
+                    "records": records,
+                    "errors": errors,
+                    "strategy": "INBOX_ADIF_FILE",
+                    "reported_count": expected,
+                    "download_file": link.rsplit("/", 1)[-1].split("?", 1)[0],
+                }
+
+            if expected == 0:
+                return {
+                    "records": [],
+                    "errors": [],
+                    "strategy": "INBOX_ADIF_FILE",
+                    "reported_count": 0,
+                    "download_file": None,
+                }
+
+            detail = " | ".join(diagnostics[:4])
+            raise CloudProviderError(
+                "eQSL criou a página de download do Inbox, mas o QSO Manager não conseguiu obter o arquivo ADIF"
+                + (f". Diagnóstico: {detail}" if detail else ".")
+            )
+
+        records, errors = ADIFParser().parse(html.unescape(body))
+        if not records and expected != 0:
+            raise CloudProviderError("eQSL Inbox não retornou um arquivo ADIF válido")
+        self._validate_count(records, expected)
+        return {
+            "records": records,
+            "errors": errors,
+            "strategy": "DIRECT_ADIF",
+            "reported_count": expected,
+            "download_file": None,
+        }
 
     def test_connection(self) -> Dict[str, Any]:
         result = self._fetch()
-        return {"ok": True, "records": len(result["records"]), "parse_errors": result["errors"][:3]}
+        return {
+            "ok": True,
+            "records": len(result["records"]),
+            "parse_errors": result["errors"][:3],
+            "download_strategy": result.get("strategy"),
+            "remote_reported_count": result.get("reported_count"),
+        }
 
     def fetch_all(self) -> Dict[str, Any]:
         result = self._fetch()
         records = result["records"]
         for row in records:
             row.setdefault("EQSL_QSL_RCVD", "Y")
-            # eQSL's incoming file may carry QSL_SENT/QSLSDATE because the record
-            # is from the sender's perspective. Preserve it as evidence; never
-            # fabricate an eQSL receive date from QSO_DATE.
+            # The eQSL Inbox file is from the sender's perspective. Preserve
+            # those fields as evidence. Only copy an explicit received date
+            # when the downloaded ADIF actually supplies one.
             if row.get("QSLRDATE"):
                 row.setdefault("EQSL_QSLRDATE", row.get("QSLRDATE"))
         return {
@@ -200,5 +310,8 @@ class EQSLInboxAdapter(CloudLogAdapter):
                 "source": "eqsl_inbox_api",
                 "confirmations_only": True,
                 "parse_errors": result["errors"][:20],
+                "download_strategy": result.get("strategy"),
+                "remote_reported_count": result.get("reported_count"),
+                "download_file": result.get("download_file"),
             },
         }
