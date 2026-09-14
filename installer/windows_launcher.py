@@ -13,6 +13,7 @@ import webbrowser
 from pathlib import Path
 
 os.environ.setdefault("QSO_MANAGER_PACKAGED", "1")
+os.environ.setdefault("ENVIRONMENT", "production")
 APP_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 
@@ -140,7 +141,7 @@ def _run_self_test() -> int:
             return 14
         from app.services.v9_product_service import V9ProductService
         diagnostic = V9ProductService().diagnostics()
-        if diagnostic.get("version") != "9.0.0" or not diagnostic.get("capability_parity"):
+        if diagnostic.get("version") != "1.0.0" or not diagnostic.get("capability_parity"):
             return 16
         config = _make_uvicorn_config(app, DEFAULT_PORT)
         if config.log_config is not None:
@@ -208,7 +209,7 @@ def _run_gui() -> int:
     frame = tk.Frame(root, padx=26, pady=22)
     frame.pack(fill="both", expand=True)
     tk.Label(frame, text="PU2BRU QSO Manager", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-    tk.Label(frame, text="v9 · log unificado para desktop e mobile", font=("Segoe UI", 10), fg="#35627d").pack(anchor="w", pady=(2, 14))
+    tk.Label(frame, text="v1.0.0 · versão de produção", font=("Segoe UI", 10), fg="#35627d").pack(anchor="w", pady=(2, 14))
     tk.Label(frame, textvariable=status_var, font=("Segoe UI", 11, "bold"), wraplength=460, justify="left").pack(anchor="w")
     tk.Label(frame, textvariable=detail_var, font=("Segoe UI", 9), fg="#555555", wraplength=460, justify="left").pack(anchor="w", pady=(5, 15))
     buttons = tk.Frame(frame)
