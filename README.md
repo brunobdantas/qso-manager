@@ -95,7 +95,7 @@ Consulte [SECURITY.md](SECURITY.md) antes de reportar qualquer problema envolven
 O artefato de produção é:
 
 ```text
-PU2BRU-QSO-Manager-Setup.exe
+PU2BRU-QSO-Manager-Setup-v1.0.0.exe
 ```
 
 Ele é gerado pelo workflow **Build · Windows Installer** e inclui o runtime necessário. Não é necessário instalar Python, Node.js ou npm.
