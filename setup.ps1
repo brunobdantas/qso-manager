@@ -19,7 +19,7 @@ if (-not (Test-Path '.venv')) {
 & '.\.venv\Scripts\python.exe' -m pip install -r '.\backend\requirements.txt'
 
 Push-Location '.\frontend'
-npm install
+npm ci
 npm run build
 Pop-Location
 
