@@ -77,6 +77,8 @@ class V9ProductService(V8OnlineService):
             "hrd_local_in_mobile": True,
             "navigation": ["overview", "log", "inbox", "qsl", "sources", "tools"],
             "capability_parity": False,
+            "windows_production_ready": True,
+            "android_stage": "preview",
         }
 
     def configure(self, provider: str, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -186,5 +188,7 @@ class V9ProductService(V8OnlineService):
                 for row in status["providers"]
             ],
             "capability_parity": False,
+            "windows_production_ready": True,
+            "android_stage": "preview",
             "navigation": status.get("navigation", []),
         }
