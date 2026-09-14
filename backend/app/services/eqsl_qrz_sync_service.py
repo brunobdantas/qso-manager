@@ -325,16 +325,23 @@ class EqslQrzSyncService:
                     continue
                 seen_manual.add(key)
                 qso, evidence = qrz_rows[q_index], eqsl_rows[e_index]
+                item = self._candidate_view(q_index, qso, e_index, evidence, delta)
+                # Historical near-matches that are already confirmed with the
+                # same eQSL receive date do not require a human decision.
+                if item["kind"] == "ALREADY_ALIGNED":
+                    continue
                 manual.append({
-                    "call": self._call(qso),
-                    "qso_date": self._date(qso),
-                    "time_qrz": self._time_hhmm(qso),
-                    "time_eqsl": self._time_hhmm(evidence),
+                    "call": item["call"],
+                    "qso_date": item["qso_date"],
+                    "time_qrz": item["time_qrz"],
+                    "time_eqsl": item["time_eqsl"],
                     "delta_seconds": delta,
-                    "band": self._band(qso),
-                    "mode_qrz": self._effective_mode(qso),
-                    "mode_eqsl": self._effective_mode(evidence),
-                    "target_date": evidence["_EQSL_TARGET_DATE"],
+                    "band": item["band"],
+                    "mode_qrz": item["mode_qrz"],
+                    "mode_eqsl": item["mode_eqsl"],
+                    "current_received": item["current_received"],
+                    "current_date": item["current_date"],
+                    "target_date": item["target_date"],
                     "reason": "Pareamento próximo, mas fora da janela automática de 2 minutos.",
                 })
 
