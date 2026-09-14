@@ -1,4 +1,4 @@
-"""Unified product facade for QSO Manager v9.
+"""Unified product facade for PU2BRU QSO Manager.
 
 Every platform exposes the same product journey. Provider-specific limitations
 remain explicit, but online logs, confirmation feeds and manual ADIF sources
@@ -10,13 +10,14 @@ from typing import Any, Dict, Optional
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..adif.parser import ADIFParser
+from ..core.version import __version__
 from .eqsl_qrz_sync_service import EqslQrzSyncService
 from .qso_manager_workspace import QSOManagerWorkspace
 from .v8_online_service import V8OnlineService
 
 
 class V9ProductService(V8OnlineService):
-    VERSION = "9.0.0"
+    VERSION = __version__
     LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
     DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD")
     LABELS = {
@@ -31,7 +32,7 @@ class V9ProductService(V8OnlineService):
     def _normalize_provider(self, provider: str) -> str:
         name = str(provider or "").strip().upper()
         if name not in self.DISPLAY_ORDER:
-            raise CloudProviderError(f"Unsupported v9 provider: {provider}")
+            raise CloudProviderError(f"Unsupported provider: {provider}")
         return name
 
     def _configured(self, provider: str) -> bool:
@@ -71,11 +72,11 @@ class V9ProductService(V8OnlineService):
             **base,
             "version": self.VERSION,
             "product_mode": "unified",
-            "mobile_policy": "feature_parity",
+            "mobile_policy": "companion_preview",
             "providers": rows,
             "hrd_local_in_mobile": True,
             "navigation": ["overview", "log", "inbox", "qsl", "sources", "tools"],
-            "capability_parity": True,
+            "capability_parity": False,
         }
 
     def configure(self, provider: str, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -184,6 +185,6 @@ class V9ProductService(V8OnlineService):
                 }
                 for row in status["providers"]
             ],
-            "capability_parity": True,
+            "capability_parity": False,
             "navigation": status.get("navigation", []),
         }
