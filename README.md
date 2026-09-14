@@ -174,6 +174,7 @@ Mais detalhes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 - [Produção e release](docs/PRODUCTION_READINESS.md)
 - [Segurança](SECURITY.md)
 - [Contribuição](CONTRIBUTING.md)
+- [Suporte](SUPPORT.md)
 
 ## Escopo de plataforma
 
