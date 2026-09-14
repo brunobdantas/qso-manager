@@ -1,8 +1,8 @@
-name: Release 4 Windows Installer
+name: Build · Windows Installer
 
 on:
   push:
-    branches: [release4-windows-installer, release/v9-unified-stable, main]
+    branches: [main]
   pull_request:
     branches: [main]
   workflow_dispatch:
@@ -50,8 +50,11 @@ jobs:
       - name: Release 2 verification
         run: python scripts/verify_release2.py
 
-      - name: Release 3 verification
+      - name: Integration verification
         run: python scripts/verify_release3.py
+
+      - name: Production metadata gate
+        run: python scripts/verify_production.py
 
       - name: Build Windows application bundle
         run: python -m PyInstaller installer/qso_manager.spec --noconfirm --clean
