@@ -123,7 +123,11 @@ def _run_self_test() -> int:
         with engine.connect() as conn:
             if conn.exec_driver_sql("SELECT 1").scalar_one() != 1:
                 return 12
-        paths = {route.path for route in app.routes}
+        paths = {
+            path
+            for route in app.routes
+            if (path := getattr(route, "path", None))
+        }
         required = {
             "/api/health",
             "/api/cloud/status",
