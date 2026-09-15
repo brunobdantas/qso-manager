@@ -85,7 +85,7 @@ jobs:
           sha256sum dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
 
       - name: Upload Android APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PU2BRU-QSO-Manager-Android
           path: dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
