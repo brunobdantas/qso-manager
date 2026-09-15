@@ -1,4 +1,4 @@
-"""QSO Manager v8 online cockpit service.
+"""Online provider service used by the QSO Manager product facade.
 
 This layer keeps the v7 desktop intact while exposing the online-only model used
 by the new mobile experience.  HRD local is intentionally excluded here.
@@ -10,6 +10,7 @@ from typing import Any, Dict, List, Optional
 from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, records_to_adif
 from ..adapters.online_v8 import EQSLInboxAdapter, HRDLogCloudAdapter, LoTWConfirmationAdapter
 from ..adif.parser import ADIFParser
+from ..core.version import __version__
 from .advanced_analysis_service import AdvancedAnalysisService
 from .cloud_hub_fast_service import CloudHubService
 from .cloud_snapshot_store import CloudSnapshotStore
@@ -62,7 +63,7 @@ class V8OnlineService:
     def _normalize_provider(provider: str) -> str:
         name = str(provider or "").strip().upper()
         if name not in V8OnlineService.DISPLAY_ORDER:
-            raise CloudProviderError(f"Unsupported v8 provider: {provider}")
+            raise CloudProviderError(f"Unsupported provider: {provider}")
         return name
 
     def _credentials_for(self, provider: str) -> Dict[str, Any]:
@@ -108,7 +109,7 @@ class V8OnlineService:
                 "comparison_role": "qsl_evidence" if provider in {"EQSL_INBOX", "LOTW"} else "log",
             })
         return {
-            "version": "8.0.0",
+            "version": __version__,
             "mobile_policy": "online_only",
             "truth_source": "QRZ",
             "providers": rows,
@@ -427,7 +428,7 @@ class V8OnlineService:
         issues = self.issues(limit=20)
         qsl = self.qsl_analysis()
         return {
-            "version": "8.0.0",
+            "version": __version__,
             "summary": workspace.get("summary") or {},
             "issues": issues,
             "qsl_summary": qsl.get("summary") or {},

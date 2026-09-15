@@ -32,3 +32,18 @@ exports/*
 
 logs/*
 !logs/.gitkeep
+
+# Build and coverage outputs
+dist-installer/
+mobile/android/
+.coverage
+coverage.xml
+htmlcov/
+.ruff_cache/
+.mypy_cache/
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/

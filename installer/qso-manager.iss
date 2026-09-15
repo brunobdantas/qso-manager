@@ -1,5 +1,5 @@
 #define MyAppName "PU2BRU QSO Manager"
-#define MyAppVersion "9.0.0"
+#define MyAppVersion "1.0.0"
 #define MyAppPublisher "PU2BRU"
 #define MyAppExeName "PU2BRU-QSO-Manager.exe"
 
@@ -8,12 +8,16 @@ AppId={{A2D5E70F-0E0F-4BA6-9C5B-6D1764DEBBD7}
 AppName={#MyAppName}
 AppVersion={#MyAppVersion}
 AppPublisher={#MyAppPublisher}
+AppPublisherURL=https://github.com/brunobdantas/qso-manager
+AppSupportURL=https://github.com/brunobdantas/qso-manager/issues
+AppUpdatesURL=https://github.com/brunobdantas/qso-manager
+VersionInfoVersion={#MyAppVersion}.0
 DefaultDirName={localappdata}\Programs\PU2BRU QSO Manager
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 OutputDir=..\dist-installer
-OutputBaseFilename=PU2BRU-QSO-Manager-Setup
+OutputBaseFilename=PU2BRU-QSO-Manager-Setup-v1.0.0
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern

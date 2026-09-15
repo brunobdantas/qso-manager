@@ -1,4 +1,4 @@
-"""Unified v9 product API consumed by Windows and mirrored by Android."""
+"""Unified product API for the Windows production application."""
 from __future__ import annotations
 
 from typing import Any, Dict
@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 from ..adapters.cloud_logs import CloudProviderError
 from ..services.v9_product_service import V9ProductService
 
-router = APIRouter(prefix="/api/product", tags=["product-v9"])
+router = APIRouter(prefix="/api/product", tags=["product"])
 
 
 class ConnectionRequest(BaseModel):

@@ -1,6 +1,6 @@
 """Pydantic schemas for API request/response validation."""
 
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from enum import Enum
@@ -92,8 +92,7 @@ class SourceResponse(SourceBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -114,8 +113,7 @@ class ImportFileResponse(ImportFileBase):
     file_size: Optional[int] = None
     imported_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ImportBase(BaseModel):
@@ -137,8 +135,7 @@ class ImportResponse(ImportBase):
     error_message: Optional[str] = None
     files: List[ImportFileResponse] = []
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -154,8 +151,7 @@ class RawQSOResponse(BaseModel):
     record_fingerprint: Optional[str] = None
     imported_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NormalizedQSOBase(BaseModel):
@@ -190,8 +186,7 @@ class NormalizedQSOCreated(NormalizedQSOBase):
     confidence: float = 1.0
     normalized_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class NormalizedQSOFull(NormalizedQSOCreated):
@@ -234,8 +229,7 @@ class LogicalQSOResponse(LogicalQSOBase):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class QSOSourceLinkResponse(BaseModel):
@@ -247,8 +241,7 @@ class QSOSourceLinkResponse(BaseModel):
     match_score: Optional[float] = None
     matched_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class LogicalQSODetail(LogicalQSOResponse):
@@ -273,8 +266,7 @@ class ReconciliationMatchResponse(BaseModel):
     reasoning: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ReconciliationRunResponse(BaseModel):
@@ -288,8 +280,7 @@ class ReconciliationRunResponse(BaseModel):
     total_duplicates: int
     parameters: Optional[Dict[str, Any]] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class DivergenceResponse(BaseModel):
@@ -305,8 +296,7 @@ class DivergenceResponse(BaseModel):
     status: str
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # Resolve the forward reference used by LogicalQSODetail after
@@ -324,8 +314,7 @@ class DuplicateGroupResponse(BaseModel):
     action_taken: Optional[str] = None
     created_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -346,8 +335,7 @@ class SyncJobResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SyncAttemptResponse(BaseModel):
@@ -361,8 +349,7 @@ class SyncAttemptResponse(BaseModel):
     duration_ms: Optional[int] = None
     attempted_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -380,8 +367,7 @@ class BackupResponse(BaseModel):
     created_at: datetime
     expires_at: Optional[datetime] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -401,8 +387,7 @@ class AuditEventResponse(BaseModel):
     result: str
     error: Optional[str] = None
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 # ============================================================================
@@ -419,8 +404,7 @@ class SettingsResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class SettingsCreate(BaseModel):

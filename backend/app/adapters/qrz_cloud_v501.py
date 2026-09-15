@@ -17,6 +17,7 @@ from urllib.parse import parse_qs, unquote_plus
 import httpx
 
 from .cloud_logs import ADIFParser, CloudProviderError, QRZCloudAdapter
+from ..core.version import __version__
 
 
 class QRZCloudAdapterV501(QRZCloudAdapter):
@@ -98,7 +99,7 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
                 response = self.client.post(
                     self.endpoint,
                     data=form,
-                    headers={"User-Agent": "PU2BRU-QSO-Manager/5.0.5 (PU2BRU)"},
+                    headers={"User-Agent": f"PU2BRU-QSO-Manager/{__version__} (PU2BRU)"},
                     timeout=180.0 if action == "FETCH" else 60.0,
                 )
                 if response.status_code not in self.RETRYABLE_STATUS_CODES:

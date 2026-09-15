@@ -6,6 +6,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from .core.config import settings
+from .core.version import APP_NAME, __version__
 from .core.runtime import frontend_dist_dir
 from .db.database import engine, Base
 from .api import (
@@ -28,9 +29,9 @@ from .api import (
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
-    title="PU2BRU QSO Manager API",
-    description="Unified QSO management, reconciliation, QSL evidence, ADIF analysis and safe logbook synchronization",
-    version="9.0.0",
+    title=f"{APP_NAME} API",
+    description="Local-first QSO management, ADIF reconciliation, QSL evidence and audited logbook synchronization",
+    version=__version__,
 )
 
 app.add_middleware(
@@ -69,8 +70,8 @@ def root():
     if index.exists():
         return FileResponse(index)
     return {
-        "name": "PU2BRU QSO Manager API",
-        "version": "9.0.0",
+        "name": f"{APP_NAME} API",
+        "version": __version__,
         "docs": "/docs",
         "health": "/api/health",
         "frontend": "not-built",

@@ -1,0 +1,23 @@
+name: Feature request
+description: Suggest a product improvement
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: User problem
+      description: What problem should this solve?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed behavior
+    validations:
+      required: true
+  - type: textarea
+    id: safety
+    attributes:
+      label: Remote-write or data-integrity impact
+      description: Describe any effect on QRZ, WRL, Club Log, eQSL, LoTW or local log data.

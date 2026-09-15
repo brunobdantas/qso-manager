@@ -13,6 +13,7 @@ import webbrowser
 from pathlib import Path
 
 os.environ.setdefault("QSO_MANAGER_PACKAGED", "1")
+os.environ.setdefault("ENVIRONMENT", "production")
 APP_HOST = "127.0.0.1"
 DEFAULT_PORT = 8000
 
@@ -122,7 +123,10 @@ def _run_self_test() -> int:
         with engine.connect() as conn:
             if conn.exec_driver_sql("SELECT 1").scalar_one() != 1:
                 return 12
-        paths = {route.path for route in app.routes}
+        # FastAPI 0.137+ keeps included routers as a lazy route tree,
+        # so app.routes is no longer a flat list of objects exposing .path.
+        # OpenAPI is the supported resolved view of effective path operations.
+        paths = set((app.openapi().get("paths") or {}).keys())
         required = {
             "/api/health",
             "/api/cloud/status",
@@ -140,7 +144,7 @@ def _run_self_test() -> int:
             return 14
         from app.services.v9_product_service import V9ProductService
         diagnostic = V9ProductService().diagnostics()
-        if diagnostic.get("version") != "9.0.0" or not diagnostic.get("capability_parity"):
+        if diagnostic.get("version") != "1.0.0" or not diagnostic.get("windows_production_ready"):
             return 16
         config = _make_uvicorn_config(app, DEFAULT_PORT)
         if config.log_config is not None:
@@ -149,6 +153,11 @@ def _run_self_test() -> int:
         return 0
     except Exception:
         logging.exception("Self-test failed")
+        traceback.print_exc(file=sys.stderr)
+        try:
+            print(f"Self-test log: {LOG_PATH}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
         return 99
 
 
@@ -208,7 +217,7 @@ def _run_gui() -> int:
     frame = tk.Frame(root, padx=26, pady=22)
     frame.pack(fill="both", expand=True)
     tk.Label(frame, text="PU2BRU QSO Manager", font=("Segoe UI", 18, "bold")).pack(anchor="w")
-    tk.Label(frame, text="v9 · log unificado para desktop e mobile", font=("Segoe UI", 10), fg="#35627d").pack(anchor="w", pady=(2, 14))
+    tk.Label(frame, text="v1.0.0 · versão de produção", font=("Segoe UI", 10), fg="#35627d").pack(anchor="w", pady=(2, 14))
     tk.Label(frame, textvariable=status_var, font=("Segoe UI", 11, "bold"), wraplength=460, justify="left").pack(anchor="w")
     tk.Label(frame, textvariable=detail_var, font=("Segoe UI", 9), fg="#555555", wraplength=460, justify="left").pack(anchor="w", pady=(5, 15))
     buttons = tk.Frame(frame)

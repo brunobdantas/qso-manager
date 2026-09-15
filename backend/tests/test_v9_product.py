@@ -15,10 +15,12 @@ def service(tmp_path: Path) -> V9ProductService:
 def test_v9_status_is_unified_and_includes_hrd(tmp_path: Path):
     s = service(tmp_path)
     status = s.status()
-    assert status["version"] == "9.0.0"
+    assert status["version"] == "1.0.0"
     assert status["product_mode"] == "unified"
-    assert status["capability_parity"] is True
+    assert status["capability_parity"] is False
     assert status["hrd_local_in_mobile"] is True
+    assert status["windows_production_ready"] is True
+    assert status["android_stage"] == "preview"
     assert status["navigation"] == ["overview", "log", "inbox", "qsl", "sources", "tools"]
     providers = {row["provider"]: row for row in status["providers"]}
     assert set(["QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG", "HRD"]).issubset(providers)
@@ -63,9 +65,11 @@ def test_bootstrap_and_diagnostics_do_not_expose_secret_values(tmp_path: Path):
     s = service(tmp_path)
     s.credentials.set("QRZ", {"api_key": "super-secret-key"})
     boot = s.bootstrap()
-    assert boot["version"] == "9.0.0"
+    assert boot["version"] == "1.0.0"
     text = str(boot)
     assert "super-secret-key" not in text
     diagnostic = s.diagnostics()
-    assert diagnostic["capability_parity"] is True
+    assert diagnostic["capability_parity"] is False
+    assert diagnostic["windows_production_ready"] is True
+    assert diagnostic["android_stage"] == "preview"
     assert "super-secret-key" not in str(diagnostic)

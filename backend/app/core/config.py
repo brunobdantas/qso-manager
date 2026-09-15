@@ -1,4 +1,4 @@
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
 from .runtime import default_database_url, env_file_path
@@ -32,9 +32,10 @@ class Settings(BaseSettings):
     # CORS
     cors_origins: list = ["http://localhost:5173", "http://127.0.0.1:5173"]
 
-    class Config:
-        env_file = env_file_path()
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=env_file_path(),
+        case_sensitive=False,
+    )
 
     @property
     def is_production(self) -> bool:
