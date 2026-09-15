@@ -123,11 +123,10 @@ def _run_self_test() -> int:
         with engine.connect() as conn:
             if conn.exec_driver_sql("SELECT 1").scalar_one() != 1:
                 return 12
-        paths = {
-            path
-            for route in app.routes
-            if (path := getattr(route, "path", None))
-        }
+        # FastAPI 0.137+ keeps included routers as a lazy route tree,
+        # so app.routes is no longer a flat list of objects exposing .path.
+        # OpenAPI is the supported resolved view of effective path operations.
+        paths = set((app.openapi().get("paths") or {}).keys())
         required = {
             "/api/health",
             "/api/cloud/status",
