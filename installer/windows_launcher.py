@@ -150,6 +150,11 @@ def _run_self_test() -> int:
         return 0
     except Exception:
         logging.exception("Self-test failed")
+        traceback.print_exc(file=sys.stderr)
+        try:
+            print(f"Self-test log: {LOG_PATH}", file=sys.stderr, flush=True)
+        except Exception:
+            pass
         return 99
 
 
