@@ -1,12 +1,15 @@
 """Unified product API for the Windows production application."""
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from typing import Any, Dict
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from ..adapters.cloud_logs import CloudProviderError
+from ..services.award_master_service import AwardMasterError, AwardMasterService
 from ..services.v9_product_service import V9ProductService
 
 router = APIRouter(prefix="/api/product", tags=["product"])
@@ -174,3 +177,85 @@ def hrdlog_plan(limit: int = Query(default=500, ge=1, le=5000)):
 @router.post("/hrdlog/push")
 def hrdlog_push(request: HRDLogPushRequest):
     return _run(lambda: V9ProductService().push_hrdlog_missing(confirm=request.confirm, limit=request.limit))
+
+
+MAX_AWARD_ADIF_BYTES = 80 * 1024 * 1024
+
+
+async def _read_award_adif(upload: UploadFile, label: str) -> str:
+    data = await upload.read(MAX_AWARD_ADIF_BYTES + 1)
+    if not data:
+        raise HTTPException(status_code=409, detail=f"O arquivo {label} está vazio")
+    if len(data) > MAX_AWARD_ADIF_BYTES:
+        raise HTTPException(status_code=413, detail=f"O arquivo {label} excede 80 MB")
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            return data.decode("latin-1")
+        except UnicodeDecodeError as exc:
+            raise HTTPException(status_code=409, detail=f"Não foi possível decodificar o arquivo {label}") from exc
+
+
+@router.post("/award-master/preview")
+async def award_master_preview(
+    qrz: UploadFile = File(...),
+    lotw: UploadFile = File(...),
+):
+    try:
+        qrz_text = await _read_award_adif(qrz, "QRZ")
+        lotw_text = await _read_award_adif(lotw, "LoTW")
+        result = AwardMasterService().build(qrz_text, lotw_text)
+        return {
+            **result["report"],
+            "filenames": {
+                "QRZ": (qrz.filename or "qrz.adi")[:255],
+                "LOTW": (lotw.filename or "lotw.adi")[:255],
+            },
+        }
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/award-master/export")
+async def award_master_export(
+    qrz: UploadFile = File(...),
+    lotw: UploadFile = File(...),
+):
+    try:
+        qrz_text = await _read_award_adif(qrz, "QRZ")
+        lotw_text = await _read_award_adif(lotw, "LoTW")
+        result = AwardMasterService().certified_export(qrz_text, lotw_text)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"PU2BRU-UltimateAAC-MASTER-{stamp}.adi"
+        return Response(
+            content=result["content"],
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-QSO-Manager-Master-SHA256": result["report"]["master_sha256"],
+                "X-QSO-Manager-Certification": result["report"]["certification"],
+            },
+        )
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/award-master/audit")
+async def award_master_audit(
+    qrz: UploadFile = File(...),
+    lotw: UploadFile = File(...),
+):
+    try:
+        qrz_text = await _read_award_adif(qrz, "QRZ")
+        lotw_text = await _read_award_adif(lotw, "LoTW")
+        service = AwardMasterService()
+        result = service.build(qrz_text, lotw_text)
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return Response(
+            content=service.audit_csv(result["report"]),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="PU2BRU-Award-Master-audit-{stamp}.csv"'},
+        )
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
