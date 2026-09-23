@@ -150,7 +150,7 @@ class AwardMasterService:
         result = self.build(qrz_content, lotw_content)
         if not result["report"]["safe_to_export"]:
             raise AwardMasterError(
-                "O Master ADIF exige revisão: há regressão de cobertura, conflito crítico "
+                "O Master ADIF exige revisão: há regressão crítica de cobertura, conflito crítico "
                 "ou pareamento ambíguo. Nenhum arquivo certificado foi gerado."
             )
         return result
