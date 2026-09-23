@@ -38,6 +38,7 @@
     "qsl_evidence_lotw",
     "eqsl_qrz_safe_sync",
     "advanced_multi_adif_compare",
+    "award_master_safe_adif",
     "local_hrd_adif_source",
     "hrdlog_adif_bootstrap",
     "hrdlog_online_insert",
