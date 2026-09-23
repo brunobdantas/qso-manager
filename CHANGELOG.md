@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- adiciona **Award Master** QRZ + LoTW com preview read-only, auditoria, guardrails de cobertura e bloqueio de exportação quando houver pareamento ambíguo ou regressão;
+- preserva metadados úteis para awards sem sobrescrever silenciosamente identidade de QSO;
+- corrige a marca lateral para exibir o indicativo completo **PU2BRU** sem corte;
+- inclui testes de regressão e gates de produção específicos para a nova rotina.
+
+
 All notable changes to PU2BRU QSO Manager are documented here.
 
 The project follows semantic versioning for production releases.

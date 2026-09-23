@@ -60,6 +60,11 @@ def main() -> int:
     require(android.get("eqsl_qrz_safe_sync") is False, "Android must not claim QRZ mutation parity")
     require("/api/product/qsl/eqsl-qrz/plan" in desktop, "desktop missing eQSL -> QRZ analysis")
     require("/api/product/qsl/eqsl-qrz/apply" in desktop, "desktop missing eQSL -> QRZ apply")
+    require("award_master_safe_adif" in CONTRACT["capabilities"], "product contract missing Award Master capability")
+    require("/api/product/award-master/preview" in desktop, "desktop missing Award Master preview")
+    require("/api/product/award-master/export" in desktop, "desktop missing Award Master export")
+    require('@router.post("/award-master/preview")' in product_api, "backend missing Award Master preview endpoint")
+    require('@router.post("/award-master/export")' in product_api, "backend missing Award Master export endpoint")
 
     markers = {
         "advanced_multi_adif_compare": ("/api/advanced/compare", "matchRecords"),
