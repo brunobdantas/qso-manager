@@ -54,6 +54,19 @@ def main() -> int:
         require(marker.lower() in sync.lower(), f"safe eQSL -> QRZ marker missing: {marker}")
     require('"remote_delete": False' in sync, "eQSL -> QRZ must declare no remote delete")
 
+    award_master = read("backend/app/services/award_master_service.py")
+    for marker in (
+        "safe_to_export",
+        "coverage_regressions",
+        "ambiguous_pairs_are_never_merged",
+        "remote_writes",
+        "certified_export",
+    ):
+        require(marker in award_master, f"Award Master safety marker missing: {marker}")
+    product_api = read("backend/app/api/product.py")
+    require('@router.post("/award-master/preview")' in product_api, "Award Master preview endpoint missing")
+    require('@router.post("/award-master/export")' in product_api, "Award Master export endpoint missing")
+
     qrz = read("backend/app/adapters/qrz_cloud_v501.py")
     require('OPTION="REPLACE"' in qrz, "audited QRZ replacement path missing")
     require("protected_fields" in qrz and "expected_fields" in qrz, "QRZ replace must enforce protected fields and live preconditions")
