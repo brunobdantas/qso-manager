@@ -144,7 +144,15 @@ class AwardMasterService:
 
         content = self._write_adif(merged)
         report["master_sha256"] = hashlib.sha256(content.encode("utf-8")).hexdigest()
-        return {"content": content, "report": report}
+        return {
+            "content": content,
+            "report": report,
+            "audit": {
+                "conflicts": conflicts,
+                "ambiguous": ambiguous,
+                "regressions": regressions,
+            },
+        }
 
     def certified_export(self, qrz_content: str, lotw_content: str) -> Dict[str, Any]:
         result = self.build(qrz_content, lotw_content)
@@ -155,23 +163,37 @@ class AwardMasterService:
             )
         return result
 
-    def audit_csv(self, report: Dict[str, Any]) -> str:
+    def audit_csv(self, payload: Dict[str, Any]) -> str:
+        # The preview intentionally caps conflict rows to keep the UI responsive,
+        # while the downloadable CSV receives the complete audit trail.
+        if "report" in payload:
+            report = payload["report"]
+            audit = payload.get("audit") or {}
+            conflict_items = audit.get("conflicts", [])
+            ambiguous_items = audit.get("ambiguous", [])
+            regression_items = audit.get("regressions", [])
+        else:
+            report = payload
+            conflict_items = report.get("conflicts", {}).get("items", [])
+            ambiguous_items = report.get("ambiguous", [])
+            regression_items = report.get("coverage", {}).get("regressions", [])
+
         output = io.StringIO()
         writer = csv.writer(output)
         writer.writerow(["section", "call", "date", "band", "mode", "field", "qrz", "lotw", "resolution", "severity", "reason"])
-        for item in report.get("conflicts", {}).get("items", []):
+        for item in conflict_items:
             writer.writerow([
                 "conflict", item.get("call", ""), item.get("date", ""), item.get("band", ""),
                 item.get("mode", ""), item.get("field", ""), item.get("qrz", ""),
                 item.get("lotw", ""), item.get("resolution", ""), item.get("severity", ""),
                 item.get("reason", ""),
             ])
-        for item in report.get("ambiguous", []):
+        for item in ambiguous_items:
             writer.writerow([
                 "ambiguous", item.get("call", ""), item.get("date", ""), item.get("band", ""),
                 item.get("mode", ""), "", "", "", "", "review", item.get("reason", ""),
             ])
-        for item in report.get("coverage", {}).get("regressions", []):
+        for item in regression_items:
             writer.writerow([
                 "coverage_regression", "", "", "", "", item.get("metric", ""),
                 item.get("qrz", ""), item.get("lotw", ""), item.get("master", ""),
