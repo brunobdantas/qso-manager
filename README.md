@@ -18,6 +18,7 @@
 - usa evidências do eQSL Inbox e LoTW para análise de confirmação;
 - sincroniza confirmações recebidas no eQSL para o QRZ com política conservadora;
 - oferece comparação avançada de arquivos ADIF;
+- gera um **Master ADIF para awards** combinando QRZ + LoTW com política conservadora, auditoria e bloqueio automático contra regressão de cobertura;
 - preserva backups e histórico de atividade;
 - armazena credenciais localmente de forma criptografada.
 
@@ -63,6 +64,14 @@ Antes da primeira gravação, o lote inteiro passa por preflight. O sistema cria
 Campos protegidos — incluindo identidade do QSO, `CONTEST_ID` e confirmação/data LoTW — não podem mudar silenciosamente. Qualquer regressão interrompe o lote.
 
 Casos ambíguos, colisões, ausência de data ou pareamentos fora da janela automática permanecem fora da gravação.
+
+## Master ADIF para awards
+
+Na área **Ferramentas → Master para awards**, o desktop pode combinar exports completos do QRZ e do LoTW sem escrever em nenhuma plataforma remota.
+
+A rotina usa pareamento conservador: primeiro por identidade e horário exatos; apenas pares 1:1 dentro de uma janela curta podem ser aproximados. Casos ambíguos permanecem separados e bloqueiam a exportação segura. O QRZ é usado para enriquecer metadados como IOTA e grids; o LoTW prevalece nos campos geográficos de award. Antes de liberar o download, o sistema compara métricas protegidas — DXCC, grids, IOTA e cobertura de estados por FT8/FT4 — e bloqueia qualquer Master que fique abaixo da melhor fonte.
+
+O relatório de auditoria registra conflitos, pareamentos ambíguos, hashes SHA-256 das fontes e do Master gerado. A indicação **SAFE** é uma validação interna do QSO Manager sobre integridade da fusão; não substitui a validação das entidades emissoras de awards.
 
 ## Segurança e privacidade
 
