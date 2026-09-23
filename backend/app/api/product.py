@@ -253,7 +253,7 @@ async def award_master_audit(
         result = service.build(qrz_text, lotw_text)
         stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
         return Response(
-            content=service.audit_csv(result["report"]),
+            content=service.audit_csv(result),
             media_type="text/csv; charset=utf-8",
             headers={"Content-Disposition": f'attachment; filename="PU2BRU-Award-Master-audit-{stamp}.csv"'},
         )
