@@ -158,3 +158,22 @@ def test_conflicting_grid_count_regression_is_audited_but_does_not_duplicate_qso
     assert result["report"]["coverage"]["warnings"][0]["metric"] == "grids4"
     assert result["report"]["coverage"]["blocking_regressions"] == []
     assert service.certified_export(qrz, lotw)["report"]["safe_to_export"] is True
+
+
+def test_audit_csv_uses_complete_conflict_trail():
+    qrz = adif(adif_record(
+        CALL="K1ABC", QSO_DATE="20260101", TIME_ON="120000", BAND="15M",
+        MODE="FT8", STATE="MA", GRIDSQUARE="FN42AA",
+    ))
+    lotw = adif(adif_record(
+        CALL="K1ABC", QSO_DATE="20260101", TIME_ON="120000", BAND="15M",
+        MODE="FT8", STATE="MA", GRIDSQUARE="FN31AA", DXCC="291", QSL_RCVD="Y",
+    ))
+
+    service = AwardMasterService()
+    result = service.build(qrz, lotw)
+    csv_text = service.audit_csv(result)
+
+    assert "GRIDSQUARE" in csv_text
+    assert "FN42AA" in csv_text
+    assert "FN31AA" in csv_text
