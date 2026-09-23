@@ -107,3 +107,54 @@ def test_grid_conflict_for_us_qso_prefers_lotw_and_is_audited():
 
     assert "<GRIDSQUARE:6>EN12HV" in result["content"]
     assert any(item["field"] == "GRIDSQUARE" for item in conflicts)
+
+
+def test_ft4_mfsk_submode_is_not_a_critical_identity_conflict():
+    qrz = adif(adif_record(
+        CALL="N8TR", QSO_DATE="20260124", TIME_ON="120000", BAND="12M",
+        MODE="FT4", FREQ="24.915",
+    ))
+    lotw = adif(adif_record(
+        CALL="N8TR", QSO_DATE="20260124", TIME_ON="120000", BAND="12M",
+        MODE="MFSK", SUBMODE="FT4", FREQ="24.915", QSL_RCVD="Y",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert result["report"]["safe_to_export"] is True
+    assert result["report"]["conflicts"]["critical"] == 0
+    assert result["report"]["merge"]["matched_pairs"] == 1
+
+
+def test_conflicting_grid_count_regression_is_audited_but_does_not_duplicate_qso():
+    qrz = adif(
+        adif_record(
+            CALL="K1AAA", QSO_DATE="20260101", TIME_ON="120000", BAND="15M",
+            MODE="FT8", STATE="MA", GRIDSQUARE="FN42AA",
+        ),
+        adif_record(
+            CALL="K1BBB", QSO_DATE="20260101", TIME_ON="120100", BAND="15M",
+            MODE="FT8", STATE="MA", GRIDSQUARE="FN43AA",
+        ),
+    )
+    lotw = adif(
+        adif_record(
+            CALL="K1AAA", QSO_DATE="20260101", TIME_ON="120000", BAND="15M",
+            MODE="FT8", STATE="MA", GRIDSQUARE="FN42BB", DXCC="291", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="K1BBB", QSO_DATE="20260101", TIME_ON="120100", BAND="15M",
+            MODE="FT8", STATE="MA", GRIDSQUARE="FN42CC", DXCC="291", QSL_RCVD="Y",
+        ),
+    )
+
+    service = AwardMasterService()
+    result = service.build(qrz, lotw)
+
+    assert result["report"]["safe_to_export"] is True
+    assert result["report"]["certification"] == "SAFE_WITH_WARNINGS"
+    assert result["report"]["merge"]["master_records"] == 2
+    assert result["report"]["coverage"]["master"]["grids4"] == 1
+    assert result["report"]["coverage"]["warnings"][0]["metric"] == "grids4"
+    assert result["report"]["coverage"]["blocking_regressions"] == []
+    assert service.certified_export(qrz, lotw)["report"]["safe_to_export"] is True
