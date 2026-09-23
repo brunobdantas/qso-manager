@@ -84,19 +84,26 @@ class AwardMasterService:
         }
         master_metrics = self._metrics(merged)
         regressions = self._coverage_regressions(source_metrics, master_metrics)
+        blocking_regressions = [r for r in regressions if r.get("severity") == "critical"]
+        coverage_warnings = [r for r in regressions if r.get("severity") != "critical"]
         identity_conflicts = [c for c in conflicts if c.get("severity") == "critical"]
-        safe_to_export = not regressions and not ambiguous and not identity_conflicts
+        safe_to_export = not blocking_regressions and not ambiguous and not identity_conflicts
 
         report = {
             "safe_to_export": safe_to_export,
-            "certification": "SAFE" if safe_to_export else "REVIEW_REQUIRED",
+            "certification": (
+                "SAFE_WITH_WARNINGS" if safe_to_export and coverage_warnings
+                else "SAFE" if safe_to_export
+                else "REVIEW_REQUIRED"
+            ),
             "policy": {
                 "remote_writes": False,
                 "qrz_role": "metadata_enrichment",
                 "lotw_role": "award_identity_and_location_authority",
                 "matching": "exact first; reciprocal unique <=120s fallback",
                 "ambiguous_pairs_are_never_merged": True,
-                "export_blocked_on_coverage_regression": True,
+                "export_blocked_on_critical_coverage_regression": True,
+                "conflicting_grid_regression_is_audited_warning": True,
             },
             "sources": {
                 "QRZ": {
@@ -124,6 +131,8 @@ class AwardMasterService:
                 "sources": source_metrics,
                 "master": master_metrics,
                 "regressions": regressions,
+                "blocking_regressions": blocking_regressions,
+                "warnings": coverage_warnings,
             },
             "conflicts": {
                 "total": len(conflicts),
@@ -166,7 +175,7 @@ class AwardMasterService:
             writer.writerow([
                 "coverage_regression", "", "", "", "", item.get("metric", ""),
                 item.get("qrz", ""), item.get("lotw", ""), item.get("master", ""),
-                "critical", item.get("reason", ""),
+                item.get("severity", "critical"), item.get("reason", ""),
             ])
         return output.getvalue()
 
@@ -300,14 +309,47 @@ class AwardMasterService:
         elif not self._empty(lotw.get("IOTA")):
             result["IOTA"] = lotw["IOTA"]
 
-        for field in IDENTITY_FIELDS:
+        # MODE may legitimately be encoded differently by providers
+        # (e.g. QRZ MODE=FT4 versus LoTW MODE=MFSK/SUBMODE=FT4).
+        # Compare canonical operating identity, never raw provider encoding.
+        for field in ("CALL", "QSO_DATE", "BAND"):
             qv, lv = qrz.get(field), lotw.get(field)
             if self._empty(qv) or self._empty(lv):
                 continue
-            if field == "TIME_ON" and pair.kind == "NEAR_TIME":
-                continue
             if not self._equivalent(field, qv, lv):
-                conflicts.append(self._conflict(qrz, lotw, field, qv, lv, qv, "qrz", "Campos de identidade nunca são sobrescritos silenciosamente.", severity="critical"))
+                conflicts.append(self._conflict(
+                    qrz, lotw, field, qv, lv, qv, "qrz",
+                    "Campos de identidade nunca são sobrescritos silenciosamente.",
+                    severity="critical",
+                ))
+
+        if pair.kind == "EXACT" and self._time_key(qrz) != self._time_key(lotw):
+            conflicts.append(self._conflict(
+                qrz, lotw, "TIME_ON", qrz.get("TIME_ON"), lotw.get("TIME_ON"),
+                qrz.get("TIME_ON"), "qrz",
+                "Horário divergente em um pareamento que deveria ser exato.",
+                severity="critical",
+            ))
+
+        q_mode, l_mode = self._canonical_mode(qrz), self._canonical_mode(lotw)
+        if q_mode and l_mode and q_mode != l_mode:
+            conflicts.append(self._conflict(
+                qrz, lotw, "MODE", q_mode, l_mode, q_mode, "qrz",
+                "Modos canônicos divergentes; pareamento exige revisão.",
+                severity="critical",
+            ))
+
+        q_freq, l_freq = qrz.get("FREQ"), lotw.get("FREQ")
+        if (
+            not self._empty(q_freq)
+            and not self._empty(l_freq)
+            and not self._frequency_compatible(qrz, lotw)
+        ):
+            conflicts.append(self._conflict(
+                qrz, lotw, "FREQ", q_freq, l_freq, q_freq, "qrz",
+                "Frequências diferem mais de 20 kHz; QSO preservado e conflito auditado.",
+                severity="warning",
+            ))
 
         result = self._normalize_lotw_confirmation(result, lotw)
         result["APP_QSOMGR_SOURCES"] = "QRZ,LOTW"
@@ -352,13 +394,22 @@ class AwardMasterService:
             actual = int(master.get(metric, 0))
             expected = max(qrz, lotw)
             if actual < expected:
+                severity = "warning" if metric == "grids4" else "critical"
                 regressions.append({
                     "metric": metric,
                     "qrz": qrz,
                     "lotw": lotw,
                     "master": actual,
                     "expected_minimum": expected,
-                    "reason": "O master ficou abaixo da melhor fonte nesta dimensão; exportação certificada bloqueada.",
+                    "severity": severity,
+                    "reason": (
+                        "Há grids conflitantes entre as fontes. O Master adotou a localização conservadora "
+                        "sem duplicar o QSO; a diferença fica auditada, mas não bloqueia o arquivo."
+                        if metric == "grids4"
+                        else
+                        "O Master ficou abaixo da melhor fonte nesta dimensão protegida; "
+                        "a exportação certificada foi bloqueada."
+                    ),
                 })
         return regressions
 
