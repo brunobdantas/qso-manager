@@ -69,7 +69,7 @@ Casos ambíguos, colisões, ausência de data ou pareamentos fora da janela auto
 
 Na área **Ferramentas → Master para awards**, o desktop pode combinar exports completos do QRZ e do LoTW sem escrever em nenhuma plataforma remota.
 
-A rotina usa pareamento conservador: primeiro por identidade e horário exatos; apenas pares 1:1 dentro de uma janela curta podem ser aproximados. Casos ambíguos permanecem separados e bloqueiam a exportação segura. O QRZ é usado para enriquecer metadados como IOTA e grids; o LoTW prevalece nos campos geográficos de award. Antes de liberar o download, o sistema compara métricas protegidas — DXCC, grids, IOTA e cobertura de estados por FT8/FT4 — e bloqueia qualquer Master que fique abaixo da melhor fonte.
+A rotina usa pareamento conservador: primeiro por identidade e horário exatos; apenas pares 1:1 dentro de uma janela curta podem ser aproximados. Casos ambíguos permanecem separados e bloqueiam a exportação segura. O QRZ é usado para enriquecer metadados como IOTA e grids; o LoTW prevalece nos campos geográficos de award. Antes de liberar o download, o sistema compara métricas protegidas — DXCC, grids, IOTA e cobertura de estados por FT8/FT4. Regressões críticas bloqueiam o Master. Divergências de grid que não podem ser preservadas simultaneamente sem duplicar um QSO são mantidas como alertas auditados, com preferência conservadora pela localização do LoTW.
 
 O relatório de auditoria registra conflitos, pareamentos ambíguos, hashes SHA-256 das fontes e do Master gerado. A indicação **SAFE** é uma validação interna do QSO Manager sobre integridade da fusão; não substitui a validação das entidades emissoras de awards.
 
