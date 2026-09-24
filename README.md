@@ -5,9 +5,9 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.0.0** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.0.1** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.0.0. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.0.1. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
 
 ## O que o produto faz
 
@@ -116,7 +116,7 @@ Consulte [SECURITY.md](SECURITY.md) antes de reportar qualquer problema envolven
 O artefato de produção é:
 
 ```text
-PU2BRU-QSO-Manager-Setup-v1.0.0.exe
+PU2BRU-QSO-Manager-Setup-v1.0.1.exe
 ```
 
 Ele é gerado pelo workflow **Build · Windows Installer** e inclui o runtime necessário. Não é necessário instalar Python, Node.js ou npm.
@@ -125,7 +125,7 @@ A atualização/reinstalação do programa não remove os dados persistentes do 
 
 ### SmartScreen
 
-A v1.0.0 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
+A v1.0.1 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
 
 ## Desenvolvimento
 
@@ -159,7 +159,7 @@ npm run build
 
 ## Qualidade e release gates
 
-A v1.0.0 exige, no CI:
+A v1.0.1 exige, no CI:
 
 - suíte de acceptance imutável;
 - regressão completa do backend;
@@ -199,7 +199,7 @@ Mais detalhes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Escopo de plataforma
 
-| Plataforma | Estado v1.0.0 |
+| Plataforma | Estado v1.0.1 |
 | --- | --- |
 | Windows 11 | **Produção** |
 | Android | **Preview / companion** |
