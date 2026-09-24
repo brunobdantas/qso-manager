@@ -15,6 +15,7 @@
 - pesquisa e compara QSOs sem precisar abrir cada plataforma;
 - identifica ausências, divergências e duplicidades prováveis;
 - mantém snapshots locais das fontes online;
+- atualiza fontes remotas em paralelo com progresso por provedor e isolamento de falhas;
 - usa evidências do eQSL Inbox e LoTW para análise de confirmação;
 - sincroniza confirmações recebidas no eQSL para o QRZ com política conservadora;
 - oferece comparação avançada de arquivos ADIF;
@@ -36,6 +37,17 @@
 | Ham Radio Deluxe | ADIF local | — | Fonte manual/local |
 
 As capacidades variam de acordo com a API pública oferecida por cada serviço. O QSO Manager não inventa operações que o provedor não documenta ou não permite.
+
+## Downloads paralelos das fontes
+
+A página **Fontes** permite atualizar todas as integrações remotas de uma vez. Os downloads independentes são executados em paralelo, com até seis workers, e a interface acompanha:
+
+- percentual geral por fontes concluídas;
+- estado individual de cada fonte: fila, baixando, concluído ou falha;
+- quantidade de registros e duração por fonte concluída;
+- falhas isoladas, sem descartar snapshots válidos das demais fontes.
+
+Cada snapshot só é substituído depois que o download daquela fonte termina e é processado com sucesso. Uma falha em Club Log, LoTW, QRZ ou outra integração não apaga a cópia local anterior e não interrompe os demais downloads.
 
 ## eQSL → QRZ
 
