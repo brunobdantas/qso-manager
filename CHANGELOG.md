@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.0.2] - 2026-09-24
+
+- muda o LoTW de feed de confirmações para **log completo**: QSOs aceitos + QSLs/confirmações;
+- adiciona sincronização incremental LoTW usando `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL`;
+- migra automaticamente snapshots antigos do LoTW que continham somente QSLs;
+- gera o **Master para awards diretamente das fontes já carregadas**, sem reenviar QRZ/LoTW;
+- mantém upload manual de ADIF apenas como modo avançado;
+- preserva os guardrails, auditoria e bloqueios de segurança do Master;
+- mantém downloads paralelos e progresso por fonte da v1.0.1.
+
+
 ## [1.0.1] - 2026-09-24
 
 - corrige a validação LoTW para usar uma consulta pequena, com timeout e mensagens de erro acionáveis;
