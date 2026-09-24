@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
 
@@ -76,20 +77,52 @@ class HRDLogCloudAdapter(CloudLogAdapter):
 
 
 class LoTWConfirmationAdapter(CloudLogAdapter):
-    """Read received LoTW confirmations through the official report service."""
+    """Read received LoTW confirmations through the official report service.
+
+    Connection testing intentionally uses a tiny recent query.  A full-history
+    download can contain tens of thousands of confirmations and is not an
+    appropriate authentication probe.
+    """
 
     provider = "LOTW"
     endpoint = "https://lotw.arrl.org/lotwuser/lotwreport.adi"
     capabilities = {"read": True, "add": False, "update": False, "delete": False}
+    USER_AGENT = f"PU2BRU-QSO-Manager/{__version__} (LoTW read-only)"
+    TEST_TIMEOUT = httpx.Timeout(15.0, connect=8.0)
+    SYNC_TIMEOUT = httpx.Timeout(180.0, connect=12.0)
 
     def _required(self) -> Dict[str, str]:
         login = str(self.credentials.get("login") or self.credentials.get("username") or "").strip()
         password = str(self.credentials.get("password") or "").strip()
         if not login or not password:
-            raise CloudProviderError("LoTW requires login and password")
+            raise CloudProviderError("LoTW exige o username da conta e a senha")
         return {"login": login, "password": password}
 
-    def _download(self, since: str = "1945-11-15") -> str:
+    @staticmethod
+    def _clean_error(body: str) -> str:
+        clean = re.sub(r"<[^>]+>", " ", html.unescape(body or ""))
+        return re.sub(r"\s+", " ", clean).strip()
+
+    @staticmethod
+    def _looks_like_auth_error(clean: str) -> bool:
+        lower = clean.lower()
+        markers = (
+            "username/password incorrect",
+            "username / password incorrect",
+            "incorrect password",
+            "invalid password",
+            "login failed",
+            "logon failed",
+            "authentication failed",
+        )
+        return any(marker in lower for marker in markers)
+
+    def _download(
+        self,
+        since: str = "1945-11-15",
+        *,
+        timeout: Optional[httpx.Timeout] = None,
+    ) -> str:
         auth = self._required()
         params = {
             **auth,
@@ -99,22 +132,60 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
             "qso_withown": "yes",
             "qso_qslsince": since,
         }
-        response = self.client.get(self.endpoint, params=params)
-        response.raise_for_status()
+        try:
+            response = self.client.get(
+                self.endpoint,
+                params=params,
+                headers={
+                    "User-Agent": self.USER_AGENT,
+                    "Accept": "text/plain,text/html;q=0.8,*/*;q=0.5",
+                },
+                timeout=timeout or self.SYNC_TIMEOUT,
+            )
+            response.raise_for_status()
+        except httpx.TimeoutException as exc:
+            raise CloudProviderError(
+                "LoTW não respondeu dentro do tempo esperado. "
+                "Tente novamente; se persistir, verifique se o site do LoTW está acessível no navegador."
+            ) from exc
+        except httpx.HTTPStatusError as exc:
+            status = exc.response.status_code
+            raise CloudProviderError(f"LoTW retornou HTTP {status}") from exc
+        except httpx.RequestError as exc:
+            raise CloudProviderError(
+                "Não foi possível alcançar o serviço do LoTW. Verifique a conexão e tente novamente."
+            ) from exc
+
         body = response.text or ""
         if "<EOH>" not in body.upper():
-            clean = re.sub(r"<[^>]+>", " ", html.unescape(body))
-            clean = re.sub(r"\s+", " ", clean).strip()
-            raise CloudProviderError("LoTW did not return ADIF" + (f": {clean[:300]}" if clean else ""))
+            clean = self._clean_error(body)
+            if self._looks_like_auth_error(clean):
+                raise CloudProviderError(
+                    "LoTW recusou o username/senha. Use o username da conta LoTW "
+                    "(nem sempre ele é igual ao indicativo)."
+                )
+            raise CloudProviderError(
+                "LoTW respondeu, mas não devolveu ADIF"
+                + (f": {clean[:300]}" if clean else "")
+            )
         return body
 
     def test_connection(self) -> Dict[str, Any]:
-        body = self._download("2026-01-01")
+        # A same-day QSL query is sufficient to authenticate and normally
+        # returns a very small payload, including a valid ADIF header when zero
+        # confirmations were received today.
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        body = self._download(today, timeout=self.TEST_TIMEOUT)
         records, errors = ADIFParser().parse(body)
-        return {"ok": True, "records": len(records), "parse_errors": errors[:3]}
+        return {
+            "ok": True,
+            "records": len(records),
+            "parse_errors": errors[:3],
+            "message": "Credenciais LoTW validadas. A sincronização completa é feita separadamente.",
+        }
 
     def fetch_all(self) -> Dict[str, Any]:
-        body = self._download("1945-11-15")
+        body = self._download("1945-11-15", timeout=self.SYNC_TIMEOUT)
         records, errors = ADIFParser().parse(body)
         for row in records:
             if str(row.get("QSL_RCVD") or "").upper() == "Y":

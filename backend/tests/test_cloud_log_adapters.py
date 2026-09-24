@@ -1,3 +1,4 @@
+import pytest
 from urllib.parse import urlencode
 
 import httpx
@@ -7,8 +8,10 @@ from app.adapters.cloud_logs import (
     EQSLCloudAdapter,
     QRZCloudAdapter,
     WRLCloudAdapter,
+    CloudProviderError,
     record_to_adif,
 )
+from app.adapters.online_v8 import LoTWConfirmationAdapter
 
 
 def test_record_to_adif_restores_adif_date_and_time_format():
@@ -87,3 +90,61 @@ def test_clublog_download_and_eqsl_outbox_are_parsed_as_adif():
     assert eqsl.test_connection()["ok"] is True
     assert len(eqsl.fetch_all()["records"]) == 1
     assert eqsl.add_qso({"CALL": "K1ABC", "QSO_DATE": "2026-09-04", "TIME_ON": "12:39:00", "BAND": "20m", "FREQ": 14.074, "MODE": "FT8"})["ok"] is True
+
+
+
+def test_lotw_connection_uses_small_current_query_and_accepts_zero_records():
+    seen = {}
+
+    def handler(request):
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            text="<ADIF_VER:5>3.1.4<APP_LoTW_NUMREC:1>0<EOH>",
+            headers={"content-type": "text/plain"},
+        )
+
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.test_connection()
+
+    assert result["ok"] is True
+    assert result["records"] == 0
+    assert seen["params"]["qso_query"] == "1"
+    assert seen["params"]["qso_qsl"] == "yes"
+    assert seen["params"]["qso_qsldetail"] == "yes"
+    assert seen["params"]["qso_withown"] == "yes"
+    assert seen["params"]["qso_qslsince"]
+    assert seen["params"]["qso_qslsince"] != "1945-11-15"
+
+
+def test_lotw_authentication_error_is_reported_clearly():
+    def handler(request):
+        return httpx.Response(
+            200,
+            text="<html><body>Username/password incorrect</body></html>",
+            headers={"content-type": "text/html"},
+        )
+
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "wrong"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(CloudProviderError, match="recusou o username/senha"):
+        adapter.test_connection()
+
+
+def test_lotw_timeout_fails_with_actionable_message():
+    def handler(request):
+        raise httpx.ReadTimeout("timeout", request=request)
+
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(CloudProviderError, match="não respondeu"):
+        adapter.test_connection()

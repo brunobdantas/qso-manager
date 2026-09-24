@@ -14,7 +14,7 @@ const PROVIDER_FIELDS = {
   WRL:[['api_key','WRL Developer API Key','password','Integrations → Developer API.'],['logbook_id','Logbook ID (opcional)','text','Deixe vazio para o logbook padrão.']],
   CLUBLOG:[['email','E-mail','email','Conta Club Log.'],['app_password','Application Password','password','Prefira uma Application Password.'],['callsign','Indicativo','text','Ex.: PU2BRU'],['api_key','API Key de escrita','password','Necessária para publicar/excluir.']],
   EQSL:[['username','Indicativo / Username','text','Ex.: PU2BRU'],['password','Senha','password','Armazenada somente no computador.'],['qth_nickname','QTH Nickname (opcional)','text','Use quando houver mais de um QTH.']],
-  LOTW:[['login','Login LoTW','text','Usuário do Logbook of The World.'],['password','Senha LoTW','password','Armazenada somente no computador.']],
+  LOTW:[['login','Username da conta LoTW','text','Use o username da conta LoTW. Normalmente é o indicativo, mas pode ser diferente.'],['password','Senha LoTW','password','Use a senha da conta LoTW; não é a senha do certificado TQSL. Armazenada somente no computador.']],
   HRDLOG:[['callsign','Indicativo','text','Ex.: PU2BRU'],['upload_code','Upload Code','password','Código de upload do HRDLog.net.']],
 }
 const short = p => ({CLUBLOG:'CL',EQSL_INBOX:'eQ+',HRDLOG:'HL',HRD:'HRD'}[p] || p)
