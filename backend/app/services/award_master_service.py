@@ -14,8 +14,10 @@ import hashlib
 import io
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
+from ..adapters.cloud_logs import records_to_adif
 from ..adif.parser import ADIFParser
 from ..core.version import __version__
+from .cloud_snapshot_store import CloudSnapshotStore
 
 
 US_STATES = {
@@ -156,6 +158,60 @@ class AwardMasterService:
 
     def certified_export(self, qrz_content: str, lotw_content: str) -> Dict[str, Any]:
         result = self.build(qrz_content, lotw_content)
+        if not result["report"]["safe_to_export"]:
+            raise AwardMasterError(
+                "O Master ADIF exige revisão: há regressão crítica de cobertura, conflito crítico "
+                "ou pareamento ambíguo. Nenhum arquivo certificado foi gerado."
+            )
+        return result
+
+
+    def build_from_snapshots(
+        self,
+        snapshots: Optional[CloudSnapshotStore] = None,
+    ) -> Dict[str, Any]:
+        store = snapshots or CloudSnapshotStore()
+        qrz = store.load("QRZ")
+        lotw = store.load("LOTW")
+        qrz_records = list(qrz.get("records") or [])
+        lotw_records = list(lotw.get("records") or [])
+        if not qrz_records:
+            raise AwardMasterError("O snapshot do QRZ está vazio. Atualize QRZ em Fontes antes de gerar o Master.")
+        if not lotw_records:
+            raise AwardMasterError("O snapshot do LoTW está vazio. Atualize LoTW em Fontes antes de gerar o Master.")
+        lotw_meta = dict(lotw.get("metadata") or {})
+        if lotw_meta.get("confirmations_only") is True:
+            raise AwardMasterError(
+                "O snapshot do LoTW foi criado por uma versão antiga e contém somente QSLs. "
+                "Atualize LoTW em Fontes para baixar o log completo antes de gerar o Master."
+            )
+
+        qrz_content = records_to_adif(qrz_records, program_id="QSO-MANAGER-QRZ-SNAPSHOT")
+        lotw_content = records_to_adif(lotw_records, program_id="QSO-MANAGER-LOTW-SNAPSHOT")
+        result = self.build(qrz_content, lotw_content)
+        result["report"]["source_mode"] = "snapshots"
+        result["report"]["snapshot_sources"] = {
+            "QRZ": {
+                "records": len(qrz_records),
+                "downloaded_at": qrz.get("downloaded_at"),
+            },
+            "LOTW": {
+                "records": len(lotw_records),
+                "downloaded_at": lotw.get("downloaded_at"),
+                "accepted_qsos": lotw_meta.get("accepted_qsos"),
+                "confirmed_qsos": lotw_meta.get("confirmed_qsos"),
+                "incremental": lotw_meta.get("incremental"),
+                "lotw_last_qso_rx": lotw_meta.get("lotw_last_qso_rx"),
+                "lotw_last_qsl": lotw_meta.get("lotw_last_qsl"),
+            },
+        }
+        return result
+
+    def certified_export_from_snapshots(
+        self,
+        snapshots: Optional[CloudSnapshotStore] = None,
+    ) -> Dict[str, Any]:
+        result = self.build_from_snapshots(snapshots)
         if not result["report"]["safe_to_export"]:
             raise AwardMasterError(
                 "O Master ADIF exige revisão: há regressão crítica de cobertura, conflito crítico "

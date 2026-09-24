@@ -148,3 +148,155 @@ def test_lotw_timeout_fails_with_actionable_message():
 
     with pytest.raises(CloudProviderError, match="não respondeu"):
         adapter.test_connection()
+
+
+
+def _lotw_report(header_fields, records):
+    header = "<ADIF_VER:5>3.1.4"
+    for key, value in header_fields.items():
+        value = str(value)
+        header += f"<{key}:{len(value)}>{value}"
+    body = header + "<EOH>"
+    for record in records:
+        for key, value in record.items():
+            value = str(value)
+            body += f"<{key}:{len(value)}>{value}"
+        body += "<EOR>"
+    return body
+
+
+def test_lotw_full_sync_downloads_all_accepted_qsos_not_only_qsls():
+    seen = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        seen.append(params)
+        assert params["qso_qsl"] == "no"
+        assert params["qso_qsorxsince"] == "1945-11-15"
+        assert params["qso_qsldetail"] == "yes"
+        return httpx.Response(200, text=_lotw_report(
+            {
+                "APP_LoTW_LASTQSORX": "2026-09-24 12:00:00",
+                "APP_LoTW_NUMREC": "2",
+            },
+            [
+                {
+                    "CALL": "K1AAA", "QSO_DATE": "20260924", "TIME_ON": "100000",
+                    "BAND": "15M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+                    "APP_LoTW_RXQSO": "2026-09-24 11:00:00", "QSL_RCVD": "N",
+                },
+                {
+                    "CALL": "K1BBB", "QSO_DATE": "20260924", "TIME_ON": "101000",
+                    "BAND": "15M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+                    "APP_LoTW_RXQSO": "2026-09-24 11:05:00", "QSL_RCVD": "Y",
+                    "QSLRDATE": "20260924", "APP_LoTW_RXQSL": "2026-09-24 11:30:00",
+                    "STATE": "VT", "GRIDSQUARE": "FN34MQ",
+                },
+            ],
+        ))
+
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.fetch_all()
+
+    assert len(result["records"]) == 2
+    assert result["metadata"]["confirmations_only"] is False
+    assert result["metadata"]["accepted_qsos"] == 2
+    assert result["metadata"]["confirmed_qsos"] == 1
+    assert result["metadata"]["lotw_last_qso_rx"] == "2026-09-24 12:00:00"
+    assert result["metadata"]["lotw_last_qsl"] == "2026-09-24 11:30:00"
+    assert result["records"][1]["LOTW_QSL_RCVD"] == "Y"
+    assert len(seen) == 1
+
+
+def test_lotw_incremental_sync_uses_both_official_cursors_and_merges_qsl_updates():
+    requests = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        requests.append(params)
+        if params["qso_qsl"] == "no":
+            assert params["qso_qsorxsince"] == "2026-09-23 20:00:00"
+            return httpx.Response(200, text=_lotw_report(
+                {"APP_LoTW_LASTQSORX": "2026-09-24 12:00:00", "APP_LoTW_NUMREC": "1"},
+                [{
+                    "CALL": "K1NEW", "QSO_DATE": "20260924", "TIME_ON": "090000",
+                    "BAND": "10M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+                    "APP_LoTW_RXQSO": "2026-09-24 10:00:00", "QSL_RCVD": "N",
+                }],
+            ))
+        assert params["qso_qsl"] == "yes"
+        assert params["qso_qslsince"] == "2026-09-23 21:00:00"
+        return httpx.Response(200, text=_lotw_report(
+            {"APP_LoTW_LASTQSL": "2026-09-24 12:30:00", "APP_LoTW_NUMREC": "1"},
+            [{
+                "CALL": "K1OLD", "QSO_DATE": "20260923", "TIME_ON": "180000",
+                "BAND": "12M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+                "QSL_RCVD": "Y", "QSLRDATE": "20260924",
+                "APP_LoTW_RXQSL": "2026-09-24 12:30:00",
+                "STATE": "SD", "GRIDSQUARE": "EN12HV", "DXCC": "291",
+            }],
+        ))
+
+    previous = {
+        "records": [{
+            "CALL": "K1OLD", "QSO_DATE": "2026-09-23", "TIME_ON": "18:00:00",
+            "BAND": "12M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+            "QSL_RCVD": "N", "APP_QSOMGR_LOTW_ACCEPTED": "Y",
+        }],
+        "metadata": {
+            "coverage": "API_FULL_SYNC",
+            "source": "lotw_qso_qsl_api",
+            "confirmations_only": False,
+            "lotw_last_qso_rx": "2026-09-23 20:00:00",
+            "lotw_last_qsl": "2026-09-23 21:00:00",
+        },
+    }
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.fetch_incremental(previous)
+
+    assert len(requests) == 2
+    assert len(result["records"]) == 2
+    assert result["metadata"]["incremental"] is True
+    assert result["metadata"]["delta_qso_records"] == 1
+    assert result["metadata"]["delta_qsl_records"] == 1
+    assert result["metadata"]["lotw_last_qso_rx"] == "2026-09-24 12:00:00"
+    assert result["metadata"]["lotw_last_qsl"] == "2026-09-24 12:30:00"
+    old = next(r for r in result["records"] if r["CALL"] == "K1OLD")
+    assert old["LOTW_QSL_RCVD"] == "Y"
+    assert old["STATE"] == "SD"
+    assert old["GRIDSQUARE"] == "EN12HV"
+
+
+def test_lotw_old_confirmation_only_snapshot_forces_one_full_migration():
+    calls = []
+
+    def handler(request):
+        calls.append(dict(request.url.params))
+        return httpx.Response(200, text=_lotw_report(
+            {"APP_LoTW_LASTQSORX": "2026-09-24 12:00:00", "APP_LoTW_NUMREC": "1"},
+            [{
+                "CALL": "K1AAA", "QSO_DATE": "20260924", "TIME_ON": "100000",
+                "BAND": "15M", "MODE": "FT8", "STATION_CALLSIGN": "PU2BRU",
+                "APP_LoTW_RXQSO": "2026-09-24 11:00:00", "QSL_RCVD": "N",
+            }],
+        ))
+
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+    result = adapter.fetch_incremental({
+        "records": [{"CALL": "K1OLD"}],
+        "metadata": {"confirmations_only": True},
+    })
+
+    assert len(calls) == 1
+    assert calls[0]["qso_qsl"] == "no"
+    assert result["metadata"]["migration_from_confirmation_only"] is True
+    assert result["metadata"]["confirmations_only"] is False

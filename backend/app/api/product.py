@@ -278,3 +278,47 @@ async def award_master_audit(
         )
     except AwardMasterError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/award-master/snapshot/preview")
+def award_master_snapshot_preview():
+    try:
+        result = AwardMasterService().build_from_snapshots()
+        return result["report"]
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/award-master/snapshot/export")
+def award_master_snapshot_export():
+    try:
+        result = AwardMasterService().certified_export_from_snapshots()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        filename = f"PU2BRU-UltimateAAC-MASTER-{stamp}.adi"
+        return Response(
+            content=result["content"],
+            media_type="text/plain; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"',
+                "X-QSO-Manager-Master-SHA256": result["report"]["master_sha256"],
+                "X-QSO-Manager-Certification": result["report"]["certification"],
+                "X-QSO-Manager-Source-Mode": "snapshots",
+            },
+        )
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.post("/award-master/snapshot/audit")
+def award_master_snapshot_audit():
+    try:
+        service = AwardMasterService()
+        result = service.build_from_snapshots()
+        stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+        return Response(
+            content=service.audit_csv(result),
+            media_type="text/csv; charset=utf-8",
+            headers={"Content-Disposition": f'attachment; filename="PU2BRU-Award-Master-audit-{stamp}.csv"'},
+        )
+    except AwardMasterError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc

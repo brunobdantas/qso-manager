@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
@@ -77,11 +78,13 @@ class HRDLogCloudAdapter(CloudLogAdapter):
 
 
 class LoTWConfirmationAdapter(CloudLogAdapter):
-    """Read received LoTW confirmations through the official report service.
+    """Read the complete LoTW log and keep confirmations incrementally updated.
 
-    Connection testing intentionally uses a tiny recent query.  A full-history
-    download can contain tens of thousands of confirmations and is not an
-    appropriate authentication probe.
+    Initial synchronization downloads accepted QSOs (qso_qsl=no), including
+    current QSL status/detail. Later synchronizations use both LoTW cursors:
+    new/updated accepted QSOs since APP_LoTW_LASTQSORX and new/updated QSLs
+    since APP_LoTW_LASTQSL. The resulting snapshot remains a complete local
+    LoTW log rather than a confirmation-only feed.
     """
 
     provider = "LOTW"
@@ -89,7 +92,9 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
     capabilities = {"read": True, "add": False, "update": False, "delete": False}
     USER_AGENT = f"PU2BRU-QSO-Manager/{__version__} (LoTW read-only)"
     TEST_TIMEOUT = httpx.Timeout(15.0, connect=8.0)
-    SYNC_TIMEOUT = httpx.Timeout(180.0, connect=12.0)
+    SYNC_TIMEOUT = httpx.Timeout(240.0, connect=12.0)
+    FULL_SYNC_SINCE = "1945-11-15"
+    CURSOR_OVERLAP_SECONDS = 600
 
     def _required(self) -> Dict[str, str]:
         login = str(self.credentials.get("login") or self.credentials.get("username") or "").strip()
@@ -117,21 +122,164 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
         )
         return any(marker in lower for marker in markers)
 
+    @staticmethod
+    def _header_fields(body: str) -> Dict[str, str]:
+        upper = body.upper()
+        eoh = upper.find("<EOH>")
+        header = body[:eoh] if eoh >= 0 else body[:4000]
+        fields: Dict[str, str] = {}
+        pos = 0
+        while pos < len(header):
+            open_pos = header.find("<", pos)
+            if open_pos < 0:
+                break
+            close_pos = header.find(">", open_pos + 1)
+            if close_pos < 0:
+                break
+            tag = header[open_pos + 1:close_pos]
+            match = re.match(r"^([A-Z0-9_]+):(\d+)(?::[A-Z])?$", tag, re.I)
+            if not match:
+                pos = close_pos + 1
+                continue
+            name = match.group(1).upper()
+            length = int(match.group(2))
+            value_start = close_pos + 1
+            value = header[value_start:value_start + length]
+            fields[name] = value.strip()
+            pos = value_start + length
+        return fields
+
+    @staticmethod
+    def _compact_date(value: Any) -> str:
+        return str(value or "").replace("-", "").strip()
+
+    @staticmethod
+    def _compact_time(value: Any) -> str:
+        return str(value or "").replace(":", "").strip()[:6]
+
+    @staticmethod
+    def _canonical_mode(record: Dict[str, Any]) -> str:
+        return str(record.get("SUBMODE") or record.get("APP_LOTW_MODE") or record.get("MODE") or "").upper().strip()
+
+    @classmethod
+    def _base_key(cls, record: Dict[str, Any]) -> tuple[str, str, str, str, str]:
+        return (
+            str(record.get("CALL") or "").upper().strip(),
+            cls._compact_date(record.get("QSO_DATE")),
+            cls._compact_time(record.get("TIME_ON")),
+            str(record.get("BAND") or "").upper().strip(),
+            str(record.get("STATION_CALLSIGN") or record.get("APP_LOTW_OWNCALL") or "").upper().strip(),
+        )
+
+    @classmethod
+    def _records_match(cls, left: Dict[str, Any], right: Dict[str, Any]) -> bool:
+        if cls._base_key(left) != cls._base_key(right):
+            return False
+        left_mode, right_mode = cls._canonical_mode(left), cls._canonical_mode(right)
+        if left_mode and right_mode and left_mode != right_mode:
+            return False
+        lf, rf = left.get("FREQ"), right.get("FREQ")
+        if lf not in (None, "") and rf not in (None, ""):
+            try:
+                if abs(float(lf) - float(rf)) > 0.020:
+                    return False
+            except (TypeError, ValueError):
+                pass
+        return True
+
+    @staticmethod
+    def _mark_confirmation(record: Dict[str, Any]) -> Dict[str, Any]:
+        row = dict(record)
+        row["APP_QSOMGR_LOTW_ACCEPTED"] = "Y"
+        if str(row.get("QSL_RCVD") or "").upper() == "Y":
+            row["LOTW_QSL_RCVD"] = "Y"
+            if row.get("QSLRDATE"):
+                row["LOTW_QSLRDATE"] = row.get("QSLRDATE")
+        return row
+
+    @staticmethod
+    def _merge_qsl_into_qso(qso: Dict[str, Any], qsl: Dict[str, Any]) -> Dict[str, Any]:
+        result = dict(qso)
+        identity = {
+            "CALL", "QSO_DATE", "TIME_ON", "TIME_OFF", "BAND", "BAND_RX",
+            "FREQ", "FREQ_RX", "MODE", "SUBMODE", "APP_LOTW_MODE",
+            "STATION_CALLSIGN", "APP_LOTW_OWNCALL",
+        }
+        for key, value in qsl.items():
+            if value in (None, ""):
+                continue
+            if key in identity and result.get(key) not in (None, ""):
+                continue
+            result[key] = value
+        if str(qsl.get("QSL_RCVD") or "").upper() == "Y":
+            result["QSL_RCVD"] = "Y"
+            result["LOTW_QSL_RCVD"] = "Y"
+            if qsl.get("QSLRDATE"):
+                result["QSLRDATE"] = qsl["QSLRDATE"]
+                result["LOTW_QSLRDATE"] = qsl["QSLRDATE"]
+        result["APP_QSOMGR_LOTW_ACCEPTED"] = "Y"
+        return result
+
+    @classmethod
+    def _merge_records(
+        cls,
+        base_records: List[Dict[str, Any]],
+        incoming_records: List[Dict[str, Any]],
+        *,
+        qsl_overlay: bool,
+    ) -> tuple[List[Dict[str, Any]], int, int]:
+        rows = [dict(r) for r in base_records]
+        index: Dict[tuple[str, str, str, str, str], List[int]] = {}
+        for i, row in enumerate(rows):
+            index.setdefault(cls._base_key(row), []).append(i)
+
+        merged = 0
+        appended = 0
+        for incoming in incoming_records:
+            row = cls._mark_confirmation(incoming)
+            candidates = index.get(cls._base_key(row), [])
+            exact = [i for i in candidates if cls._records_match(rows[i], row)]
+            target: Optional[int] = exact[0] if len(exact) == 1 else None
+            if target is None and len(candidates) == 1:
+                # LoTW may map a submitted mode before returning it. If the
+                # call/date/time/band/station tuple is unique, preserve the
+                # QSO identity from the accepted-QSO record and overlay status.
+                target = candidates[0]
+
+            if target is not None:
+                rows[target] = (
+                    cls._merge_qsl_into_qso(rows[target], row)
+                    if qsl_overlay
+                    else cls._merge_qsl_into_qso(row, rows[target])
+                )
+                merged += 1
+                continue
+
+            if qsl_overlay:
+                row["APP_QSOMGR_LOTW_QSL_ONLY"] = "Y"
+            rows.append(row)
+            index.setdefault(cls._base_key(row), []).append(len(rows) - 1)
+            appended += 1
+        return rows, merged, appended
+
     def _download(
         self,
-        since: str = "1945-11-15",
         *,
+        qsl: bool,
+        since: Optional[str] = None,
         timeout: Optional[httpx.Timeout] = None,
     ) -> str:
         auth = self._required()
         params = {
             **auth,
             "qso_query": "1",
-            "qso_qsl": "yes",
+            "qso_qsl": "yes" if qsl else "no",
             "qso_qsldetail": "yes",
+            "qso_mydetail": "yes",
             "qso_withown": "yes",
-            "qso_qslsince": since,
         }
+        if since:
+            params["qso_qslsince" if qsl else "qso_qsorxsince"] = since
         try:
             response = self.client.get(
                 self.endpoint,
@@ -170,13 +318,20 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
             )
         return body
 
-    def test_connection(self) -> Dict[str, Any]:
-        # A same-day QSL query is sufficient to authenticate and normally
-        # returns a very small payload, including a valid ADIF header when zero
-        # confirmations were received today.
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        body = self._download(today, timeout=self.TEST_TIMEOUT)
+    @classmethod
+    def _parse_report(cls, body: str) -> tuple[List[Dict[str, Any]], List[str], Dict[str, str]]:
         records, errors = ADIFParser().parse(body)
+        return [cls._mark_confirmation(r) for r in records], errors, cls._header_fields(body)
+
+    @staticmethod
+    def _max_timestamp(records: List[Dict[str, Any]], field: str) -> Optional[str]:
+        values = [str(r.get(field) or "").strip() for r in records if r.get(field)]
+        return max(values) if values else None
+
+    def test_connection(self) -> Dict[str, Any]:
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        body = self._download(qsl=True, since=today, timeout=self.TEST_TIMEOUT)
+        records, errors, _header = self._parse_report(body)
         return {
             "ok": True,
             "records": len(records),
@@ -185,20 +340,115 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
         }
 
     def fetch_all(self) -> Dict[str, Any]:
-        body = self._download("1945-11-15", timeout=self.SYNC_TIMEOUT)
-        records, errors = ADIFParser().parse(body)
-        for row in records:
-            if str(row.get("QSL_RCVD") or "").upper() == "Y":
-                row.setdefault("LOTW_QSL_RCVD", "Y")
-                if row.get("QSLRDATE"):
-                    row.setdefault("LOTW_QSLRDATE", row.get("QSLRDATE"))
+        """Initial full snapshot: every accepted QSO, with current QSL detail."""
+        started = datetime.now(timezone.utc)
+        body = self._download(qsl=False, since=self.FULL_SYNC_SINCE, timeout=self.SYNC_TIMEOUT)
+        records, errors, header = self._parse_report(body)
+
+        last_qso = (
+            header.get("APP_LOTW_LASTQSORX")
+            or self._max_timestamp(records, "APP_LOTW_RXQSO")
+        )
+        last_qsl = self._max_timestamp(records, "APP_LOTW_RXQSL")
+        if not last_qsl:
+            # Keep a safe overlap so a QSL arriving while the full query was in
+            # flight is picked up by the next incremental refresh.
+            from datetime import timedelta
+            last_qsl = (started - timedelta(seconds=self.CURSOR_OVERLAP_SECONDS)).strftime("%Y-%m-%d %H:%M:%S")
+
+        confirmed = sum(1 for r in records if str(r.get("QSL_RCVD") or "").upper() == "Y")
         return {
             "records": records,
             "metadata": {
                 "coverage": "API_FULL_SYNC",
-                "source": "lotw_confirmation_api",
-                "confirmations_only": True,
+                "source": "lotw_qso_qsl_api",
+                "confirmations_only": False,
+                "incremental": False,
                 "parse_errors": errors[:20],
+                "lotw_last_qso_rx": last_qso,
+                "lotw_last_qsl": last_qsl,
+                "accepted_qsos": len(records),
+                "confirmed_qsos": confirmed,
+                "delta_qso_records": len(records),
+                "delta_qsl_records": 0,
+                "lotw_numrec": header.get("APP_LOTW_NUMREC"),
+            },
+        }
+
+    def fetch_incremental(self, previous_snapshot: Dict[str, Any]) -> Dict[str, Any]:
+        """Refresh a complete snapshot using LoTW's QSO and QSL cursors."""
+        previous_records = list(previous_snapshot.get("records") or [])
+        metadata = dict(previous_snapshot.get("metadata") or {})
+        # Older QSO Manager releases stored only QSL records. Force one
+        # complete migration before incremental updates are enabled.
+        if (
+            not previous_records
+            or metadata.get("confirmations_only") is True
+            or not metadata.get("lotw_last_qso_rx")
+            or not metadata.get("lotw_last_qsl")
+        ):
+            result = self.fetch_all()
+            result["metadata"]["migration_from_confirmation_only"] = bool(previous_records)
+            return result
+
+        # QSO acceptance and QSL confirmation deltas are independent.
+        # Fetch both concurrently so the refresh duration is bounded by the
+        # slower LoTW query rather than the sum of the two.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="lotw-delta") as executor:
+            qso_future = executor.submit(
+                self._download,
+                qsl=False,
+                since=str(metadata["lotw_last_qso_rx"]),
+                timeout=self.SYNC_TIMEOUT,
+            )
+            qsl_future = executor.submit(
+                self._download,
+                qsl=True,
+                since=str(metadata["lotw_last_qsl"]),
+                timeout=self.SYNC_TIMEOUT,
+            )
+            qso_body = qso_future.result()
+            qsl_body = qsl_future.result()
+        qso_delta, qso_errors, qso_header = self._parse_report(qso_body)
+        qsl_delta, qsl_errors, qsl_header = self._parse_report(qsl_body)
+
+        rows, qso_merged, qso_appended = self._merge_records(
+            previous_records, qso_delta, qsl_overlay=False
+        )
+        rows, qsl_merged, qsl_appended = self._merge_records(
+            rows, qsl_delta, qsl_overlay=True
+        )
+
+        last_qso = (
+            qso_header.get("APP_LOTW_LASTQSORX")
+            or self._max_timestamp(qso_delta, "APP_LOTW_RXQSO")
+            or metadata.get("lotw_last_qso_rx")
+        )
+        last_qsl = (
+            qsl_header.get("APP_LOTW_LASTQSL")
+            or self._max_timestamp(qsl_delta, "APP_LOTW_RXQSL")
+            or metadata.get("lotw_last_qsl")
+        )
+        confirmed = sum(1 for r in rows if str(r.get("QSL_RCVD") or "").upper() == "Y")
+        return {
+            "records": rows,
+            "metadata": {
+                **metadata,
+                "coverage": "API_FULL_SYNC",
+                "source": "lotw_qso_qsl_api",
+                "confirmations_only": False,
+                "incremental": True,
+                "parse_errors": (qso_errors + qsl_errors)[:20],
+                "lotw_last_qso_rx": last_qso,
+                "lotw_last_qsl": last_qsl,
+                "accepted_qsos": len(rows),
+                "confirmed_qsos": confirmed,
+                "delta_qso_records": len(qso_delta),
+                "delta_qsl_records": len(qsl_delta),
+                "delta_qso_merged": qso_merged,
+                "delta_qso_appended": qso_appended,
+                "delta_qsl_merged": qsl_merged,
+                "delta_qsl_appended": qsl_appended,
             },
         }
 

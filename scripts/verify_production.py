@@ -67,6 +67,12 @@ def main() -> int:
     require('@router.post("/award-master/preview")' in product_api, "Award Master preview endpoint missing")
     require('@router.post("/award-master/export")' in product_api, "Award Master export endpoint missing")
 
+    online_v8 = read("backend/app/adapters/online_v8.py")
+    for marker in ("qso_qsorxsince", "qso_qslsince", "APP_LOTW_LASTQSORX", "APP_LOTW_LASTQSL", "fetch_incremental"):
+        require(marker in online_v8, f"LoTW incremental safety marker missing: {marker}")
+    require('@router.post("/award-master/snapshot/preview")' in product_api, "snapshot Award Master preview endpoint missing")
+    require('@router.post("/award-master/snapshot/export")' in product_api, "snapshot Award Master export endpoint missing")
+
     parallel_sync = read("backend/app/services/parallel_sync_service.py")
     for marker in ("ThreadPoolExecutor", "progress", "completed_with_errors", "active_job_id"):
         require(marker in parallel_sync, f"parallel source sync marker missing: {marker}")

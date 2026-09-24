@@ -1,6 +1,6 @@
 {
   "product": "PU2BRU QSO Manager",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "navigation": [
     {
       "id": "overview",
@@ -40,6 +40,8 @@
     "eqsl_qrz_safe_sync",
     "advanced_multi_adif_compare",
     "award_master_safe_adif",
+    "award_master_from_loaded_snapshots",
+    "lotw_full_incremental_sync",
     "local_hrd_adif_source",
     "hrdlog_adif_bootstrap",
     "hrdlog_online_insert",
@@ -64,7 +66,9 @@
       "all_core_capabilities": true,
       "eqsl_qrz_safe_sync": true,
       "hrd_local_mode": "ADIF/local workspace",
-      "parallel_source_sync_progress": true
+      "parallel_source_sync_progress": true,
+      "lotw_full_incremental_sync": true,
+      "award_master_from_loaded_snapshots": true
     },
     "android": {
       "stage": "preview",
@@ -72,7 +76,9 @@
       "eqsl_qrz_safe_sync": false,
       "hrd_local_mode": "ADIF import",
       "note": "Companion app; remote QRZ mutation is intentionally disabled.",
-      "parallel_source_sync_progress": false
+      "parallel_source_sync_progress": false,
+      "lotw_full_incremental_sync": false,
+      "award_master_from_loaded_snapshots": false
     }
   }
 }

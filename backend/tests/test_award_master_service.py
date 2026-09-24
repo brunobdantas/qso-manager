@@ -1,6 +1,7 @@
 import pytest
 
 from app.services.award_master_service import AwardMasterError, AwardMasterService, US_STATES
+from app.services.cloud_snapshot_store import CloudSnapshotStore
 
 
 def adif_record(**fields):
@@ -177,3 +178,46 @@ def test_audit_csv_uses_complete_conflict_trail():
     assert "GRIDSQUARE" in csv_text
     assert "FN42AA" in csv_text
     assert "FN31AA" in csv_text
+
+
+
+def test_master_can_use_loaded_snapshots_without_manual_upload(tmp_path):
+    store = CloudSnapshotStore(root=tmp_path)
+    qso = {
+        "CALL": "N0MHL", "QSO_DATE": "2026-07-26", "TIME_ON": "19:30:00",
+        "BAND": "12M", "MODE": "FT8", "STATE": "SD", "GRIDSQUARE": "EN12HV",
+        "DXCC": "291", "COUNTRY": "UNITED STATES OF AMERICA",
+    }
+    store.save("QRZ", [dict(qso, IOTA="NA-001")], {"coverage": "API_FULL_SYNC"})
+    store.save("LOTW", [dict(qso, QSL_RCVD="Y", LOTW_QSL_RCVD="Y")], {
+        "coverage": "API_FULL_SYNC",
+        "source": "lotw_qso_qsl_api",
+        "confirmations_only": False,
+        "accepted_qsos": 1,
+        "confirmed_qsos": 1,
+        "lotw_last_qso_rx": "2026-09-24 12:00:00",
+        "lotw_last_qsl": "2026-09-24 12:30:00",
+    })
+
+    result = AwardMasterService().build_from_snapshots(store)
+
+    assert result["report"]["source_mode"] == "snapshots"
+    assert result["report"]["snapshot_sources"]["QRZ"]["records"] == 1
+    assert result["report"]["snapshot_sources"]["LOTW"]["accepted_qsos"] == 1
+    assert result["report"]["safe_to_export"] is True
+    assert "<CALL:5>N0MHL" in result["content"]
+
+
+def test_snapshot_master_rejects_legacy_confirmation_only_lotw(tmp_path):
+    store = CloudSnapshotStore(root=tmp_path)
+    store.save("QRZ", [{
+        "CALL": "K1ABC", "QSO_DATE": "2026-09-24", "TIME_ON": "12:00:00",
+        "BAND": "15M", "MODE": "FT8",
+    }], {"coverage": "API_FULL_SYNC"})
+    store.save("LOTW", [{
+        "CALL": "K1ABC", "QSO_DATE": "2026-09-24", "TIME_ON": "12:00:00",
+        "BAND": "15M", "MODE": "FT8", "QSL_RCVD": "Y",
+    }], {"coverage": "API_FULL_SYNC", "confirmations_only": True})
+
+    with pytest.raises(AwardMasterError, match="somente QSLs"):
+        AwardMasterService().build_from_snapshots(store)
