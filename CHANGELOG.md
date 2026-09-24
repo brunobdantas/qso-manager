@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [1.0.1] - 2026-09-24
 
 - executa downloads paralelos das fontes remotas, com até seis integrações simultâneas;
 - adiciona barra de progresso geral e estado individual por fonte;
