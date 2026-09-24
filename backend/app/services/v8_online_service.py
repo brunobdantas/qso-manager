@@ -107,10 +107,14 @@ class V8OnlineService:
                 "note": self.NOTES[provider],
                 "source_kind": (
                     "hybrid_bootstrap_upload" if provider == "HRDLOG"
-                    else "confirmation_api" if provider in {"EQSL_INBOX", "LOTW"}
+                    else "confirmation_api" if provider == "EQSL_INBOX"
                     else "remote_api"
                 ),
-                "comparison_role": "qsl_evidence" if provider in {"EQSL_INBOX", "LOTW"} else "log",
+                "comparison_role": (
+                    "log_and_qsl_evidence" if provider == "LOTW"
+                    else "qsl_evidence" if provider == "EQSL_INBOX"
+                    else "log"
+                ),
             })
         return {
             "version": __version__,
