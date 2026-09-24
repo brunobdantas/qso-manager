@@ -5,9 +5,9 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.0.1** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.0.2** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.0.1. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.0.2. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
 
 ## O que o produto faz
 
@@ -17,6 +17,7 @@
 - mantém snapshots locais das fontes online;
 - atualiza fontes remotas em paralelo com progresso por provedor e isolamento de falhas;
 - usa evidências do eQSL Inbox e LoTW para análise de confirmação;
+- mantém **LoTW completo e incremental**: QSOs aceitos + confirmações, usando cursores oficiais para baixar apenas deltas após a primeira carga;
 - sincroniza confirmações recebidas no eQSL para o QRZ com política conservadora;
 - oferece comparação avançada de arquivos ADIF;
 - gera um **Master ADIF para awards** combinando QRZ + LoTW com política conservadora, auditoria e bloqueio automático contra regressão de cobertura;
@@ -32,7 +33,7 @@
 | Club Log | ✅ | ✅ | Log online |
 | eQSL OutBox | ✅ | ✅ inclusão | Log enviado ao eQSL |
 | eQSL Inbox | ✅ | — | Evidência de QSL recebida |
-| LoTW | ✅ | — | Evidência de QSL recebida |
+| LoTW | ✅ | — | Log completo aceito pelo LoTW + evidência de QSL recebida |
 | HRDLog.net | bootstrap + envio | ✅ inclusão | Log online/híbrido |
 | Ham Radio Deluxe | ADIF local | — | Fonte manual/local |
 
@@ -48,6 +49,10 @@ A página **Fontes** permite atualizar todas as integrações remotas de uma vez
 - falhas isoladas, sem descartar snapshots válidos das demais fontes.
 
 Cada snapshot só é substituído depois que o download daquela fonte termina e é processado com sucesso. Uma falha em Club Log, LoTW, QRZ ou outra integração não apaga a cópia local anterior e não interrompe os demais downloads.
+
+## LoTW completo e incremental
+
+Na primeira atualização após instalar a v1.0.2, o LoTW migra o snapshot antigo de confirmações para o **log completo de QSOs aceitos**. Nas atualizações seguintes, o QSO Manager usa os marcadores `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL` para consultar somente QSOs/QSLs novos ou atualizados. O snapshot local continua completo; somente o tráfego remoto passa a ser incremental.
 
 ## eQSL → QRZ
 
@@ -79,7 +84,7 @@ Casos ambíguos, colisões, ausência de data ou pareamentos fora da janela auto
 
 ## Master ADIF para awards
 
-Na área **Ferramentas → Master para awards**, o desktop pode combinar exports completos do QRZ e do LoTW sem escrever em nenhuma plataforma remota.
+Na área **Ferramentas → Master para awards**, o desktop usa por padrão os snapshots de QRZ e LoTW já carregados em **Fontes**, sem exigir novo upload. O modo de arquivos externos continua disponível como opção avançada e nada é escrito em plataformas remotas.
 
 A rotina usa pareamento conservador: primeiro por identidade e horário exatos; apenas pares 1:1 dentro de uma janela curta podem ser aproximados. Casos ambíguos permanecem separados e bloqueiam a exportação segura. O QRZ é usado para enriquecer metadados como IOTA e grids; o LoTW prevalece nos campos geográficos de award. Antes de liberar o download, o sistema compara métricas protegidas — DXCC, grids, IOTA e cobertura de estados por FT8/FT4. Regressões críticas bloqueiam o Master. Divergências de grid que não podem ser preservadas simultaneamente sem duplicar um QSO são mantidas como alertas auditados, com preferência conservadora pela localização do LoTW.
 
@@ -116,7 +121,7 @@ Consulte [SECURITY.md](SECURITY.md) antes de reportar qualquer problema envolven
 O artefato de produção é:
 
 ```text
-PU2BRU-QSO-Manager-Setup-v1.0.1.exe
+PU2BRU-QSO-Manager-Setup-v1.0.2.exe
 ```
 
 Ele é gerado pelo workflow **Build · Windows Installer** e inclui o runtime necessário. Não é necessário instalar Python, Node.js ou npm.
@@ -125,7 +130,7 @@ A atualização/reinstalação do programa não remove os dados persistentes do 
 
 ### SmartScreen
 
-A v1.0.1 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
+A v1.0.2 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
 
 ## Desenvolvimento
 
@@ -159,7 +164,7 @@ npm run build
 
 ## Qualidade e release gates
 
-A v1.0.1 exige, no CI:
+A v1.0.2 exige, no CI:
 
 - suíte de acceptance imutável;
 - regressão completa do backend;
@@ -199,7 +204,7 @@ Mais detalhes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Escopo de plataforma
 
-| Plataforma | Estado v1.0.1 |
+| Plataforma | Estado v1.0.2 |
 | --- | --- |
 | Windows 11 | **Produção** |
 | Android | **Preview / companion** |
