@@ -67,6 +67,18 @@ def main() -> int:
     require('@router.post("/award-master/preview")' in product_api, "Award Master preview endpoint missing")
     require('@router.post("/award-master/export")' in product_api, "Award Master export endpoint missing")
 
+    source_sync = read("backend/app/services/sync_job_service.py")
+    for marker in (
+        "threading.Thread",
+        "progress",
+        "remote_write",
+        "snapshot anterior foi preservado",
+        "start_all",
+    ):
+        require(marker in source_sync, f"parallel source sync safety marker missing: {marker}")
+    require('@router.post("/sync-jobs-all")' in product_api, "parallel sync-all endpoint missing")
+    require('@router.get("/sync-jobs/{job_id}")' in product_api, "sync progress endpoint missing")
+
     qrz = read("backend/app/adapters/qrz_cloud_v501.py")
     require('OPTION="REPLACE"' in qrz, "audited QRZ replacement path missing")
     require("protected_fields" in qrz and "expected_fields" in qrz, "QRZ replace must enforce protected fields and live preconditions")
