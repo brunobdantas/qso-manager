@@ -5,6 +5,8 @@ by the new mobile experience.  HRD local is intentionally excluded here.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
+import threading
 from typing import Any, Dict, List, Optional
 
 from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, records_to_adif
@@ -25,6 +27,8 @@ PROVIDERS["HRDLOG"] = HRDLogCloudAdapter
 
 class V8OnlineService:
     LOG_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG")
+    _provider_sync_locks_guard = threading.Lock()
+    _provider_sync_locks: Dict[str, threading.Lock] = {}
     SYNC_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW")
     DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG")
 
@@ -162,30 +166,58 @@ class V8OnlineService:
             result = adapter.test_connection()
         return {"provider": provider, **result}
 
+    @classmethod
+    def _sync_lock(cls, provider: str) -> threading.Lock:
+        with cls._provider_sync_locks_guard:
+            lock = cls._provider_sync_locks.get(provider)
+            if lock is None:
+                lock = threading.Lock()
+                cls._provider_sync_locks[provider] = lock
+            return lock
+
     def sync(self, provider: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
         if provider == "HRDLOG":
             raise CloudProviderError("HRDLog uses ADIF bootstrap + realtime inserts; it has no supported full-log read sync")
-        with self._adapter(provider) as adapter:
-            result = adapter.fetch_all()
-        metadata = dict(result.get("metadata") or {})
-        metadata.setdefault("coverage", "API_FULL_SYNC")
-        metadata.setdefault("source", "remote_api")
-        summary = self.snapshots.save(provider, result.get("records") or [], metadata)
-        QSOManagerWorkspace.invalidate_cache()
-        return {"ok": True, **summary}
+        # Prevent two UI actions from downloading/writing the same provider
+        # snapshot concurrently. Different providers still run in parallel.
+        with self._sync_lock(provider):
+            with self._adapter(provider) as adapter:
+                result = adapter.fetch_all()
+            metadata = dict(result.get("metadata") or {})
+            metadata.setdefault("coverage", "API_FULL_SYNC")
+            metadata.setdefault("source", "remote_api")
+            summary = self.snapshots.save(provider, result.get("records") or [], metadata)
+            QSOManagerWorkspace.invalidate_cache()
+            return {"ok": True, **summary}
 
     def sync_all(self) -> Dict[str, Any]:
-        results = []
-        for provider in self.SYNC_PROVIDERS:
-            if not self._configured(provider):
-                results.append({"provider": provider, "ok": False, "skipped": True, "error": "not configured"})
-                continue
-            try:
-                results.append(self.sync(provider))
-            except Exception as exc:
-                results.append({"provider": provider, "ok": False, "error": str(exc)})
-        return {"results": results, "dashboard": self.dashboard()}
+        """Synchronize independent remote providers concurrently.
+
+        This keeps the legacy blocking API compatible while removing the old
+        one-provider-at-a-time bottleneck. The desktop uses the observable
+        background coordinator for live progress; other clients still benefit
+        from the same parallel execution here.
+        """
+        configured = [p for p in self.SYNC_PROVIDERS if self._configured(p)]
+        by_provider: Dict[str, Dict[str, Any]] = {
+            p: {"provider": p, "ok": False, "skipped": True, "error": "not configured"}
+            for p in self.SYNC_PROVIDERS
+            if p not in configured
+        }
+        workers = min(6, max(1, len(configured)))
+        if configured:
+            with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="qso-sync") as executor:
+                futures = {executor.submit(self.sync, provider): provider for provider in configured}
+                for future in as_completed(futures):
+                    provider = futures[future]
+                    try:
+                        by_provider[provider] = future.result()
+                    except Exception as exc:
+                        by_provider[provider] = {"provider": provider, "ok": False, "error": str(exc)}
+        results = [by_provider[p] for p in self.SYNC_PROVIDERS]
+        QSOManagerWorkspace.invalidate_cache()
+        return {"results": results, "dashboard": self.dashboard(), "parallelism": workers if configured else 0}
 
     def import_hrdlog_adif(self, content: str, filename: str = "hrdlog.adi") -> Dict[str, Any]:
         if not str(content or "").strip():

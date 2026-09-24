@@ -15,7 +15,7 @@ def service(tmp_path: Path) -> V9ProductService:
 def test_v9_status_is_unified_and_includes_hrd(tmp_path: Path):
     s = service(tmp_path)
     status = s.status()
-    assert status["version"] == "1.0.0"
+    assert status["version"] == "1.0.1"
     assert status["product_mode"] == "unified"
     assert status["capability_parity"] is False
     assert status["hrd_local_in_mobile"] is True
@@ -65,7 +65,7 @@ def test_bootstrap_and_diagnostics_do_not_expose_secret_values(tmp_path: Path):
     s = service(tmp_path)
     s.credentials.set("QRZ", {"api_key": "super-secret-key"})
     boot = s.bootstrap()
-    assert boot["version"] == "1.0.0"
+    assert boot["version"] == "1.0.1"
     text = str(boot)
     assert "super-secret-key" not in text
     diagnostic = s.diagnostics()

@@ -3,7 +3,7 @@ import { loadAllDatasets, loadConnections, saveDataset, saveProviderCredentials,
 import { parseAdif, consolidate, buildQsl, buildIssues, hrdlogPlan, recordToAdif, matchRecords } from './core.js'
 import { fetchQRZ, fetchWRL, fetchClubLog, fetchEQSL, fetchEQSLInbox, fetchLoTW, pushHRDLog, testProvider } from './providers.js'
 
-const VERSION='1.0.0'
+const VERSION='1.0.1'
 const KEYS=['QRZ','WRL','CLUBLOG','EQSL','EQSL_INBOX','LOTW','HRDLOG','HRD']
 const LOGS=['QRZ','WRL','CLUBLOG','EQSL','HRDLOG','HRD']
 const LABELS={QRZ:'QRZ',WRL:'World Radio League',CLUBLOG:'Club Log',EQSL:'eQSL OutBox',EQSL_INBOX:'eQSL Inbox',LOTW:'LoTW',HRDLOG:'HRDLog.net',HRD:'Ham Radio Deluxe'}

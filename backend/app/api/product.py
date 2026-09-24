@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..services.award_master_service import AwardMasterError, AwardMasterService
+from ..services.parallel_sync_service import parallel_sync
 from ..services.v9_product_service import V9ProductService
 
 router = APIRouter(prefix="/api/product", tags=["product"])
@@ -156,7 +157,25 @@ def sync(provider: str):
 
 @router.post("/sync-all")
 def sync_all():
+    # Backward-compatible blocking endpoint. New desktop clients use the
+    # observable background job endpoints below.
     return _run(lambda: V9ProductService().sync_all())
+
+
+@router.post("/sync-all/start")
+def sync_all_start():
+    return _run(parallel_sync.start)
+
+
+@router.get("/sync-all/active")
+def sync_all_active():
+    active = parallel_sync.active()
+    return {"active": active is not None, "job": active}
+
+
+@router.get("/sync-all/{job_id}")
+def sync_all_status(job_id: str):
+    return _run(lambda: parallel_sync.get(job_id))
 
 
 @router.put("/sources/{provider}/adif")
