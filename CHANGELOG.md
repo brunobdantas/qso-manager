@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+## [1.0.1] - 2026-09-24
+
+### Added
+- Downloads paralelos de QRZ, WRL, Club Log, eQSL OutBox, eQSL Inbox e LoTW.
+- Barra de progresso individual por fonte e progresso agregado.
+- Jobs de sincronização em background, permitindo que a interface continue responsiva.
+
+### Safety
+- Cada fonte grava em snapshot atômico independente.
+- Falhas de download preservam o snapshot anterior.
+- Sincronização em background continua somente leitura nas fontes remotas.
+
+
 - adiciona **Award Master** QRZ + LoTW com preview read-only, auditoria, guardrails de cobertura e bloqueio de exportação quando houver pareamento ambíguo ou regressão;
 - preserva metadados úteis para awards sem sobrescrever silenciosamente identidade de QSO;
 - corrige a marca lateral para exibir o indicativo completo **PU2BRU** sem corte;
