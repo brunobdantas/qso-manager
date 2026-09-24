@@ -72,6 +72,14 @@ def main() -> int:
     require('@router.post("/sync-all/start")' in product_api, "backend missing parallel sync start endpoint")
     require('@router.get("/sync-all/{job_id}")' in product_api, "backend missing sync progress endpoint")
 
+    require("lotw_full_incremental_sync" in CONTRACT["capabilities"], "product contract missing full incremental LoTW capability")
+    require("award_master_from_loaded_snapshots" in CONTRACT["capabilities"], "product contract missing snapshot Award Master capability")
+    require(CONTRACT["platforms"]["windows"].get("lotw_full_incremental_sync") is True, "Windows must expose full incremental LoTW sync")
+    require(CONTRACT["platforms"]["windows"].get("award_master_from_loaded_snapshots") is True, "Windows must expose snapshot Award Master")
+    require("/api/product/award-master/snapshot/preview" in desktop, "desktop missing snapshot Award Master preview")
+    require('@router.post("/award-master/snapshot/preview")' in product_api, "backend missing snapshot Award Master preview")
+    require('@router.post("/award-master/snapshot/export")' in product_api, "backend missing snapshot Award Master export")
+
     markers = {
         "advanced_multi_adif_compare": ("/api/advanced/compare", "matchRecords"),
         "local_hrd_adif_source": ("HRD", "HRD"),
