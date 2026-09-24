@@ -5,6 +5,7 @@ by the new mobile experience.  HRD local is intentionally excluded here.
 """
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
 from ..adapters.cloud_logs import PROVIDERS, CloudProviderError, records_to_adif
@@ -176,16 +177,31 @@ class V8OnlineService:
         return {"ok": True, **summary}
 
     def sync_all(self) -> Dict[str, Any]:
-        results = []
-        for provider in self.SYNC_PROVIDERS:
-            if not self._configured(provider):
-                results.append({"provider": provider, "ok": False, "skipped": True, "error": "not configured"})
-                continue
-            try:
-                results.append(self.sync(provider))
-            except Exception as exc:
-                results.append({"provider": provider, "ok": False, "error": str(exc)})
-        return {"results": results, "dashboard": self.dashboard()}
+        """Synchronize independent remote sources concurrently.
+
+        Each provider writes to its own atomic snapshot file, so downloads can
+        safely overlap. Results are returned in the canonical provider order to
+        keep existing clients deterministic.
+        """
+        configured = [p for p in self.SYNC_PROVIDERS if self._configured(p)]
+        by_provider: Dict[str, Dict[str, Any]] = {
+            p: {"provider": p, "ok": False, "skipped": True, "error": "not configured"}
+            for p in self.SYNC_PROVIDERS if p not in configured
+        }
+        if configured:
+            with ThreadPoolExecutor(max_workers=len(configured), thread_name_prefix="qso-sync") as pool:
+                futures = {pool.submit(self.sync, provider): provider for provider in configured}
+                for future in as_completed(futures):
+                    provider = futures[future]
+                    try:
+                        by_provider[provider] = future.result()
+                    except Exception as exc:
+                        by_provider[provider] = {"provider": provider, "ok": False, "error": str(exc)}
+        return {
+            "parallel": True,
+            "results": [by_provider[p] for p in self.SYNC_PROVIDERS],
+            "dashboard": self.dashboard(),
+        }
 
     def import_hrdlog_adif(self, content: str, filename: str = "hrdlog.adi") -> Dict[str, Any]:
         if not str(content or "").strip():

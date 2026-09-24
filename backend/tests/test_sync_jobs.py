@@ -4,30 +4,9 @@ from app.services import sync_job_service
 from app.services.sync_job_service import SyncJobManager
 
 
-class _FakeCredentials:
-    def configured(self, provider):
-        return True
-
-
 class _FakeSnapshots:
     def save(self, provider, records, metadata):
         return {"provider": provider, "records": len(records), "metadata": metadata, "downloaded_at": "now"}
-
-
-class _FakeService:
-    def __init__(self):
-        self.credentials = _FakeCredentials()
-        self.snapshots = _FakeSnapshots()
-
-    @classmethod
-    def _provider(cls, provider):
-        value = str(provider).strip().upper()
-        if value not in {"QRZ", "WRL", "CLUBLOG", "EQSL"}:
-            raise RuntimeError("unsupported")
-        return value
-
-    def _credentials(self, provider):
-        return {"api_key": "fake"}
 
 
 class _FakeAdapter:
@@ -42,11 +21,35 @@ class _FakeAdapter:
         return {"records": [{"CALL": "K1ABC"}, {"CALL": "W1XYZ"}], "metadata": {"coverage": "API_FULL_SYNC"}}
 
 
-def test_sync_job_exposes_progress_and_finishes(monkeypatch):
-    monkeypatch.setattr(sync_job_service, "CloudHubService", _FakeService)
-    monkeypatch.setattr(sync_job_service, "adapter_for", lambda provider, credentials: _FakeAdapter())
+class _FakeService:
+    SYNC_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW")
+    LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL OutBox", "EQSL_INBOX": "eQSL Inbox", "LOTW": "LoTW"}
+
+    def __init__(self):
+        self.snapshots = _FakeSnapshots()
+
+    def _normalize_provider(self, provider):
+        value = str(provider).strip().upper()
+        if value not in self.SYNC_PROVIDERS:
+            raise RuntimeError("unsupported")
+        return value
+
+    def _configured(self, provider):
+        return True
+
+    def _adapter(self, provider):
+        return _FakeAdapter()
+
+
+def _reset():
     SyncJobManager._jobs = {}
     SyncJobManager._active_by_provider = {}
+
+
+def test_sync_job_exposes_progress_and_finishes(monkeypatch):
+    monkeypatch.setattr(sync_job_service, "V9ProductService", _FakeService)
+    monkeypatch.setattr(sync_job_service.QSOManagerWorkspace, "invalidate_cache", classmethod(lambda cls: None))
+    _reset()
 
     started = SyncJobManager.start("qrz")
     assert started["provider"] == "QRZ"
@@ -65,6 +68,7 @@ def test_sync_job_exposes_progress_and_finishes(monkeypatch):
     assert current["records"] == 2
     assert current["snapshot"]["records"] == 2
     assert "QRZ atualizado" in current["message"]
+    assert current["remote_write"] is False
 
 
 def test_sync_job_reuses_active_job_for_same_provider(monkeypatch):
@@ -73,10 +77,13 @@ def test_sync_job_reuses_active_job_for_same_provider(monkeypatch):
             time.sleep(0.15)
             return super().fetch_all()
 
-    monkeypatch.setattr(sync_job_service, "CloudHubService", _FakeService)
-    monkeypatch.setattr(sync_job_service, "adapter_for", lambda provider, credentials: _SlowAdapter())
-    SyncJobManager._jobs = {}
-    SyncJobManager._active_by_provider = {}
+    class _SlowService(_FakeService):
+        def _adapter(self, provider):
+            return _SlowAdapter()
+
+    monkeypatch.setattr(sync_job_service, "V9ProductService", _SlowService)
+    monkeypatch.setattr(sync_job_service.QSOManagerWorkspace, "invalidate_cache", classmethod(lambda cls: None))
+    _reset()
 
     first = SyncJobManager.start("WRL")
     second = SyncJobManager.start("WRL")

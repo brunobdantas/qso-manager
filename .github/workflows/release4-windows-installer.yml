@@ -142,9 +142,8 @@ jobs:
           $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
           & $iscc "installer\qso-manager.iss"
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          if (-not (Test-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe")) {
-            throw "Installer output not found"
-          }
+          $installer = Get-ChildItem ".\dist-installer\PU2BRU-QSO-Manager-Setup-v*.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Installer output not found" }
 
       - name: Smoke-test installed copy
         shell: pwsh
@@ -153,7 +152,7 @@ jobs:
         run: |
           $installDir = Join-Path $env:TEMP "PU2BRU-QSO-Manager-installed"
           if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
-          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe"
+          $installer = (Get-ChildItem ".\dist-installer\PU2BRU-QSO-Manager-Setup-v*.exe" | Select-Object -First 1).FullName
           $install = Start-Process -FilePath $installer -ArgumentList "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/DIR=$installDir" -Wait -PassThru
           if ($install.ExitCode -ne 0) { throw "Silent installer failed with exit code $($install.ExitCode)" }
           $installedExe = Join-Path $installDir "PU2BRU-QSO-Manager.exe"
@@ -173,7 +172,7 @@ jobs:
           QSO_MANAGER_DATA_DIR: ${{ runner.temp }}\pu2bru-installed-self-test
         run: |
           $installDir = Join-Path $env:TEMP "PU2BRU-QSO-Manager-installed"
-          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe"
+          $installer = (Get-ChildItem ".\dist-installer\PU2BRU-QSO-Manager-Setup-v*.exe" | Select-Object -First 1).FullName
           $marker = Join-Path $env:QSO_MANAGER_DATA_DIR "production-upgrade-marker.txt"
           "preserve-me" | Set-Content -Path $marker -Encoding UTF8
           $db = Join-Path $env:QSO_MANAGER_DATA_DIR "data\qso_manager.db"
@@ -206,9 +205,10 @@ jobs:
       - name: Generate installer SHA-256
         shell: pwsh
         run: |
-          $installer = Resolve-Path ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe"
+          $installer = (Get-ChildItem ".\dist-installer\PU2BRU-QSO-Manager-Setup-v*.exe" | Select-Object -First 1).FullName
           $hash = (Get-FileHash -Algorithm SHA256 $installer).Hash.ToLowerInvariant()
-          "$hash  PU2BRU-QSO-Manager-Setup-v1.0.0.exe" | Set-Content ".\dist-installer\PU2BRU-QSO-Manager-Setup-v1.0.0.exe.sha256" -Encoding ASCII
+          $name = Split-Path $installer -Leaf
+          "$hash  $name" | Set-Content ($installer + ".sha256") -Encoding ASCII
           Write-Host "SHA256: $hash"
 
       - name: Upload Windows installer
@@ -216,7 +216,7 @@ jobs:
         with:
           name: PU2BRU-QSO-Manager-Windows-Setup
           path: |
-            dist-installer/PU2BRU-QSO-Manager-Setup-v1.0.0.exe
-            dist-installer/PU2BRU-QSO-Manager-Setup-v1.0.0.exe.sha256
+            dist-installer/PU2BRU-QSO-Manager-Setup-v*.exe
+            dist-installer/PU2BRU-QSO-Manager-Setup-v*.exe.sha256
           if-no-files-found: error
           retention-days: 30

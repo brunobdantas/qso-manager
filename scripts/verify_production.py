@@ -42,6 +42,7 @@ def main() -> int:
     launcher = read("installer/windows_launcher.py")
     require('os.environ.setdefault("ENVIRONMENT", "production")' in launcher, "packaged runtime must force production environment")
     require("windows_production_ready" in launcher, "packaged self-test must verify production readiness")
+    require("from app.core.version import __version__" in launcher, "Windows launcher must use canonical runtime version")
 
     sync = read("backend/app/services/eqsl_qrz_sync_service.py")
     for marker in (
@@ -66,6 +67,18 @@ def main() -> int:
     product_api = read("backend/app/api/product.py")
     require('@router.post("/award-master/preview")' in product_api, "Award Master preview endpoint missing")
     require('@router.post("/award-master/export")' in product_api, "Award Master export endpoint missing")
+
+    source_sync = read("backend/app/services/sync_job_service.py")
+    for marker in (
+        "threading.Thread",
+        "progress",
+        "remote_write",
+        "snapshot anterior foi preservado",
+        "start_all",
+    ):
+        require(marker in source_sync, f"parallel source sync safety marker missing: {marker}")
+    require('@router.post("/sync-jobs-all")' in product_api, "parallel sync-all endpoint missing")
+    require('@router.get("/sync-jobs/{job_id}")' in product_api, "sync progress endpoint missing")
 
     qrz = read("backend/app/adapters/qrz_cloud_v501.py")
     require('OPTION="REPLACE"' in qrz, "audited QRZ replacement path missing")

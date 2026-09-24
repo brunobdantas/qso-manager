@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..services.award_master_service import AwardMasterError, AwardMasterService
+from ..services.sync_job_service import SyncJobManager
 from ..services.v9_product_service import V9ProductService
 
 router = APIRouter(prefix="/api/product", tags=["product"])
@@ -157,6 +158,26 @@ def sync(provider: str):
 @router.post("/sync-all")
 def sync_all():
     return _run(lambda: V9ProductService().sync_all())
+
+
+@router.post("/sync-jobs/{provider}")
+def sync_job_start(provider: str):
+    return _run(lambda: SyncJobManager.start(provider))
+
+
+@router.post("/sync-jobs-all")
+def sync_jobs_all():
+    return _run(SyncJobManager.start_all)
+
+
+@router.get("/sync-jobs-active")
+def sync_jobs_active():
+    return _run(SyncJobManager.active)
+
+
+@router.get("/sync-jobs/{job_id}")
+def sync_job_get(job_id: str):
+    return _run(lambda: SyncJobManager.get(job_id))
 
 
 @router.put("/sources/{provider}/adif")
