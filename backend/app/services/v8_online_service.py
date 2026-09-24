@@ -48,7 +48,7 @@ class V8OnlineService:
         "CLUBLOG": "Log online completo; download e publicação pelos endpoints do Club Log.",
         "EQSL": "OutBox online: QSOs enviados ao eQSL.",
         "EQSL_INBOX": "Inbox online: evidências de eQSLs recebidos.",
-        "LOTW": "Confirmações recebidas consultadas online no relatório oficial LoTW.",
+        "LOTW": "Log LoTW completo (QSOs aceitos + confirmações), com atualização incremental pelos cursores oficiais.",
         "HRDLOG": "Bootstrap por ADIF + inserções online. Alterações feitas diretamente no site exigem nova reconciliação ADIF.",
     }
 
@@ -183,7 +183,11 @@ class V8OnlineService:
         # snapshot concurrently. Different providers still run in parallel.
         with self._sync_lock(provider):
             with self._adapter(provider) as adapter:
-                result = adapter.fetch_all()
+                if provider == "LOTW" and hasattr(adapter, "fetch_incremental"):
+                    previous = self.snapshots.load("LOTW")
+                    result = adapter.fetch_incremental(previous)
+                else:
+                    result = adapter.fetch_all()
             metadata = dict(result.get("metadata") or {})
             metadata.setdefault("coverage", "API_FULL_SYNC")
             metadata.setdefault("source", "remote_api")
