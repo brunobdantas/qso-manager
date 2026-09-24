@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import re
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
@@ -390,16 +391,24 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
             result["metadata"]["migration_from_confirmation_only"] = bool(previous_records)
             return result
 
-        qso_body = self._download(
-            qsl=False,
-            since=str(metadata["lotw_last_qso_rx"]),
-            timeout=self.SYNC_TIMEOUT,
-        )
-        qsl_body = self._download(
-            qsl=True,
-            since=str(metadata["lotw_last_qsl"]),
-            timeout=self.SYNC_TIMEOUT,
-        )
+        # QSO acceptance and QSL confirmation deltas are independent.
+        # Fetch both concurrently so the refresh duration is bounded by the
+        # slower LoTW query rather than the sum of the two.
+        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="lotw-delta") as executor:
+            qso_future = executor.submit(
+                self._download,
+                qsl=False,
+                since=str(metadata["lotw_last_qso_rx"]),
+                timeout=self.SYNC_TIMEOUT,
+            )
+            qsl_future = executor.submit(
+                self._download,
+                qsl=True,
+                since=str(metadata["lotw_last_qsl"]),
+                timeout=self.SYNC_TIMEOUT,
+            )
+            qso_body = qso_future.result()
+            qsl_body = qsl_future.result()
         qso_delta, qso_errors, qso_header = self._parse_report(qso_body)
         qsl_delta, qsl_errors, qsl_header = self._parse_report(qsl_body)
 
