@@ -42,6 +42,7 @@ def main() -> int:
     launcher = read("installer/windows_launcher.py")
     require('os.environ.setdefault("ENVIRONMENT", "production")' in launcher, "packaged runtime must force production environment")
     require("windows_production_ready" in launcher, "packaged self-test must verify production readiness")
+    require("from app.core.version import __version__" in launcher, "Windows launcher must use canonical runtime version")
 
     sync = read("backend/app/services/eqsl_qrz_sync_service.py")
     for marker in (
