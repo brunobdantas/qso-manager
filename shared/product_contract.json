@@ -1,6 +1,6 @@
 {
   "product": "PU2BRU QSO Manager",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "navigation": [
     {
       "id": "overview",
@@ -29,6 +29,7 @@
   ],
   "capabilities": [
     "sync_online_sources",
+    "parallel_source_sync",
     "consolidated_log",
     "qso_detail_by_source",
     "missing_source_detection",
