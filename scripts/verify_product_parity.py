@@ -65,6 +65,11 @@ def main() -> int:
     require("/api/product/award-master/export" in desktop, "desktop missing Award Master export")
     require('@router.post("/award-master/preview")' in product_api, "backend missing Award Master preview endpoint")
     require('@router.post("/award-master/export")' in product_api, "backend missing Award Master export endpoint")
+    require("parallel_source_sync" in CONTRACT["capabilities"], "product contract missing parallel source sync capability")
+    require("/api/product/sync-jobs-all" in desktop, "desktop missing parallel sync-all action")
+    require("u-source-progress" in desktop, "desktop missing per-source progress UI")
+    require('@router.post("/sync-jobs-all")' in product_api, "backend missing parallel sync-all endpoint")
+    require('@router.get("/sync-jobs/{job_id}")' in product_api, "backend missing sync progress endpoint")
 
     markers = {
         "advanced_multi_adif_compare": ("/api/advanced/compare", "matchRecords"),
