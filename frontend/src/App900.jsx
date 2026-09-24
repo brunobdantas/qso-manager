@@ -163,7 +163,7 @@ function SourcesPage({status,onChanged,setGlobalMessage}){
     setBusy(p)
     try{
       const job=await api('/api/product/sync-jobs/'+p,{method:'POST',body:'{}'})
-      setJobs(prev=>({...prev,[p]:job}))
+      setJobs({[p]:job})
     }catch(e){setGlobalMessage('Erro: '+e.message)}
     finally{setBusy('')}
   }
@@ -173,7 +173,7 @@ function SourcesPage({status,onChanged,setGlobalMessage}){
     try{
       const result=await api('/api/product/sync-jobs-all',{method:'POST',body:'{}'})
       const next={};(result.jobs||[]).forEach(job=>{next[job.provider]=job})
-      setJobs(prev=>({...prev,...next}))
+      setJobs(next)
       setGlobalMessage(result.started?result.started+' fonte(s) iniciada(s) em paralelo. Acompanhe o progresso abaixo.':'Nenhuma fonte remota configurada para atualizar.')
     }catch(e){setGlobalMessage('Erro: '+e.message)}
     finally{setBusy('')}
