@@ -1,7 +1,11 @@
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 
+from app.services.cloud_snapshot_store import CloudSnapshotStore
+from app.services.credential_store import CredentialStore
 from app.services.parallel_sync_service import ParallelSyncCoordinator
+from app.services.v8_online_service import V8OnlineService
 
 
 class FakeSyncService:
@@ -133,3 +137,53 @@ def test_unconfigured_sources_are_skipped_without_distorting_progress():
     assert done["completed"] == 2
     assert done["progress"] == 100
     assert done["succeeded"] == 2
+
+
+
+class SlowAdapter:
+    def __init__(self, shared):
+        self.shared = shared
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return None
+
+    def fetch_all(self):
+        with self.shared["lock"]:
+            self.shared["active"] += 1
+            self.shared["max_active"] = max(self.shared["max_active"], self.shared["active"])
+        try:
+            time.sleep(0.05)
+            return {
+                "records": [{"CALL": "K1ABC", "QSO_DATE": "2026-09-24", "TIME_ON": "120000", "BAND": "20M", "MODE": "FT8"}],
+                "metadata": {"coverage": "API_FULL_SYNC"},
+            }
+        finally:
+            with self.shared["lock"]:
+                self.shared["active"] -= 1
+
+
+class LockTestService(V8OnlineService):
+    def __init__(self, tmp_path, shared):
+        super().__init__(
+            credentials=CredentialStore(root=tmp_path),
+            snapshots=CloudSnapshotStore(root=tmp_path),
+        )
+        self.shared = shared
+
+    def _adapter(self, provider):
+        return SlowAdapter(self.shared)
+
+
+def test_same_provider_syncs_are_serialized_while_snapshot_remains_valid(tmp_path):
+    shared = {"lock": threading.Lock(), "active": 0, "max_active": 0}
+    service = LockTestService(tmp_path, shared)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _x: service.sync("QRZ"), range(2)))
+
+    assert all(result["ok"] is True for result in results)
+    assert shared["max_active"] == 1
+    assert service.snapshots.summary("QRZ")["records"] == 1
