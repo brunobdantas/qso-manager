@@ -129,13 +129,65 @@ function QslPage({qsl,onRefresh,onChanged,setGlobalMessage}){
     {!qsl?.ready?<Empty title="Ainda sem evidência online">Atualize QRZ e ao menos eQSL Inbox ou LoTW.</Empty>:<div className="u-qsl-list">{(qsl.proposals||[]).map((p,i)=><article key={i}><div><h3>{p.qso?.call}</h3><p>{p.qso?.date} · {p.qso?.band} · {p.qso?.mode}</p></div><Badge tone="ok">{p.service}</Badge><div><b>{Object.entries(p.changes||{}).map(([k,v])=>k+'='+v).join(' · ')}</b><small>{p.reason}</small></div></article>)}</div>}</>
 }
 function SourcesPage({status,onChanged,setGlobalMessage}){
-  const [config,setConfig]=useState(null),[busy,setBusy]=useState('')
+  const [config,setConfig]=useState(null),[busy,setBusy]=useState(''),[jobs,setJobs]=useState({})
   const providers=status?.providers||[]
-  async function sync(p){setBusy(p);try{const r=await api('/api/product/sync/'+p,{method:'POST',body:'{}'});setGlobalMessage(`${p}: ${fmt(r.records)} registros atualizados.`);await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
-  async function importAdif(p,file){if(!file)return;setBusy(p);try{const r=await api('/api/product/sources/'+p+'/adif',{method:'PUT',body:JSON.stringify({content:await file.text(),filename:file.name})});setGlobalMessage(`${p}: ${fmt(r.records)} QSOs importados de ${file.name}.`);await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
-  async function updateHrdlog(){setBusy('HRDLOG');try{const plan=await api('/api/product/hrdlog/plan?limit=500');if(!plan.safe_missing){setGlobalMessage('HRDLog já está alinhado com o estado conhecido do QRZ.');return}if(!window.confirm(`Enviar ${plan.candidates.length} QSO(s) seguros ao HRDLog.net?`))return;const r=await api('/api/product/hrdlog/push',{method:'POST',body:JSON.stringify({confirm:true,limit:500})});setGlobalMessage(`HRDLog: ${fmt(r.sent_or_already_remote)} atualizados; ${fmt(r.errors?.length)} erro(s).`);await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
-  async function clear(p){if(!window.confirm(`Apagar somente o snapshot local de ${p}? Nada será removido na plataforma remota.`))return;setBusy(p);try{await api('/api/product/sources/'+p+'/snapshot',{method:'DELETE'});setGlobalMessage(`${p}: snapshot local removido.`);await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
-  return <><PageHead eyebrow="FONTES" title="Uma central para todas as conexões." subtitle="Cada fonte mostra claramente como entra no produto: API completa, evidência de QSL ou ADIF local."/><div className="u-source-grid">{providers.map(p=><Card key={p.provider} title={p.label} subtitle={p.note} action={<span className={'u-dot '+(p.configured?'ok':'')}/>}><div className="u-source-number"><b>{fmt(p.snapshot?.records)}</b><span>registros conhecidos</span><small>Atualizado: {dt(p.snapshot?.downloaded_at)}</small></div><div className="u-source-tags"><Badge>{p.source_kind}</Badge>{p.comparison_role==='qsl_evidence'&&<Badge tone="ok">evidência QSL</Badge>}{p.provider==='QRZ'&&<Badge tone="truth">referência</Badge>}</div><div className="u-source-actions">{!['HRD'].includes(p.provider)&&<Button kind="secondary" small onClick={()=>setConfig(p)}>{p.configured?'Conexão':'Configurar'}</Button>}{p.provider==='HRD'&&<label className="u-file">{p.configured?'Substituir ADIF':'Importar ADIF'}<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRD',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'&&<label className="u-file">Reconciliar ADIF<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRDLOG',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'?<Button small disabled={busy===p.provider||!p.configured||!p.snapshot?.downloaded_at} onClick={updateHrdlog}>{busy===p.provider?'Processando…':'Atualizar online'}</Button>:p.capabilities?.read&&p.source_kind!=='local_adif'&&<Button small disabled={busy===p.provider||!p.configured} onClick={()=>sync(p.provider)}>{busy===p.provider?'Atualizando…':'Atualizar'}</Button>}{p.snapshot?.records>0&&<button className="u-text-danger" disabled={busy===p.provider} onClick={()=>clear(p.provider)}>limpar cópia local</button>}</div></Card>)}</div>{config&&<ConnectionModal source={config} onClose={()=>setConfig(null)} onChanged={async()=>{await onChanged();setConfig(null)}}/>}</>
+  const syncable=providers.filter(p=>p.configured&&p.capabilities?.read&&p.source_kind!=='local_adif')
+  const running=Object.values(jobs).filter(j=>j&&['queued','running'].includes(j.status))
+  const activeIds=running.map(j=>j.job_id).sort().join(',')
+  const visibleJobs=Object.values(jobs).filter(Boolean)
+  const overall=visibleJobs.length?Math.round(visibleJobs.reduce((n,j)=>n+Number(j.progress||0),0)/visibleJobs.length):0
+
+  useEffect(()=>{let alive=true;api('/api/product/sync-jobs-active').then(x=>{if(alive)setJobs(x||{})}).catch(()=>{});return()=>{alive=false}},[])
+
+  useEffect(()=>{
+    if(!activeIds)return
+    let alive=true
+    async function poll(){
+      const current=Object.values(jobs).filter(j=>j&&['queued','running'].includes(j.status))
+      if(!current.length)return
+      const results=await Promise.all(current.map(async j=>{try{return await api('/api/product/sync-jobs/'+j.job_id)}catch(e){return {...j,status:'failed',phase:'failed',progress:100,error:e.message,message:'Falha ao consultar progresso.'}}}))
+      if(!alive)return
+      setJobs(prev=>{const next={...prev};results.forEach(j=>{next[j.provider]=j});return next})
+      if(results.every(j=>!['queued','running'].includes(j.status))){
+        const failed=results.filter(j=>j.status==='failed')
+        await onChanged()
+        setGlobalMessage(failed.length?'Atualização concluída com '+failed.length+' falha(s). Os snapshots anteriores foram preservados.':results.length+' fonte(s) atualizada(s) em paralelo.')
+      }
+    }
+    poll()
+    const timer=setInterval(poll,700)
+    return()=>{alive=false;clearInterval(timer)}
+  },[activeIds])
+
+  async function sync(p){
+    setBusy(p)
+    try{
+      const job=await api('/api/product/sync-jobs/'+p,{method:'POST',body:'{}'})
+      setJobs(prev=>({...prev,[p]:job}))
+    }catch(e){setGlobalMessage('Erro: '+e.message)}
+    finally{setBusy('')}
+  }
+
+  async function syncAll(){
+    setBusy('ALL')
+    try{
+      const result=await api('/api/product/sync-jobs-all',{method:'POST',body:'{}'})
+      const next={};(result.jobs||[]).forEach(job=>{next[job.provider]=job})
+      setJobs(prev=>({...prev,...next}))
+      setGlobalMessage(result.started?result.started+' fonte(s) iniciada(s) em paralelo. Acompanhe o progresso abaixo.':'Nenhuma fonte remota configurada para atualizar.')
+    }catch(e){setGlobalMessage('Erro: '+e.message)}
+    finally{setBusy('')}
+  }
+
+  async function importAdif(p,file){if(!file)return;setBusy(p);try{const r=await api('/api/product/sources/'+p+'/adif',{method:'PUT',body:JSON.stringify({content:await file.text(),filename:file.name})});setGlobalMessage(p+': '+fmt(r.records)+' QSOs importados de '+file.name+'.');await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
+  async function updateHrdlog(){setBusy('HRDLOG');try{const plan=await api('/api/product/hrdlog/plan?limit=500');if(!plan.safe_missing){setGlobalMessage('HRDLog já está alinhado com o estado conhecido do QRZ.');return}if(!window.confirm('Enviar '+plan.candidates.length+' QSO(s) seguros ao HRDLog.net?'))return;const r=await api('/api/product/hrdlog/push',{method:'POST',body:JSON.stringify({confirm:true,limit:500})});setGlobalMessage('HRDLog: '+fmt(r.sent_or_already_remote)+' atualizados; '+fmt(r.errors?.length)+' erro(s).');await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
+  async function clear(p){if(!window.confirm('Apagar somente o snapshot local de '+p+'? Nada será removido na plataforma remota.'))return;setBusy(p);try{await api('/api/product/sources/'+p+'/snapshot',{method:'DELETE'});setGlobalMessage(p+': snapshot local removido.');await onChanged()}catch(e){setGlobalMessage('Erro: '+e.message)}finally{setBusy('')}}
+
+  return <><PageHead eyebrow="FONTES" title="Downloads paralelos e acompanháveis." subtitle="Atualize várias fontes ao mesmo tempo. Cada download roda de forma independente, com progresso por etapa e preservação do snapshot anterior em caso de falha." action={<Button disabled={busy==='ALL'||!!running.length||!syncable.length} onClick={syncAll}>{running.length?'Atualizando…':'Atualizar todas'}</Button>}/>
+    {visibleJobs.length>0&&<section className="u-sync-overall"><div><span>Progresso geral</span><b>{overall}%</b><small>{running.length?running.length+' fonte(s) em andamento':'última atualização concluída'}</small></div><div className="u-progress"><i style={{width:overall+'%'}}/></div></section>}
+    <div className="u-source-grid">{providers.map(p=>{const job=jobs[p.provider],isRunning=job&&['queued','running'].includes(job.status);return <Card key={p.provider} title={p.label} subtitle={p.note} action={<span className={'u-dot '+(p.configured?'ok':'')}/>}><div className="u-source-number"><b>{fmt(p.snapshot?.records)}</b><span>registros conhecidos</span><small>Atualizado: {dt(p.snapshot?.downloaded_at)}</small></div><div className="u-source-tags"><Badge>{p.source_kind}</Badge>{p.comparison_role==='qsl_evidence'&&<Badge tone="ok">evidência QSL</Badge>}{p.provider==='QRZ'&&<Badge tone="truth">referência</Badge>}</div>
+      {job&&<div className={'u-source-progress '+job.status}><div><span>{job.status==='failed'?'Falhou':job.status==='succeeded'?'Concluído':job.phase==='downloading'?'Baixando':job.phase==='validating'?'Validando':job.phase==='saving'?'Salvando':'Conectando'}</span><b>{Math.round(Number(job.progress||0))}%</b></div><div className={'u-progress '+(isRunning?'active':'')}><i style={{width:Math.max(2,Number(job.progress||0))+'%'}}/></div><small>{job.error||job.message}{job.records!=null?' · '+fmt(job.records)+' registros':''}</small></div>}
+      <div className="u-source-actions">{!['HRD'].includes(p.provider)&&<Button kind="secondary" small disabled={isRunning} onClick={()=>setConfig(p)}>{p.configured?'Conexão':'Configurar'}</Button>}{p.provider==='HRD'&&<label className="u-file">{p.configured?'Substituir ADIF':'Importar ADIF'}<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRD',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'&&<label className="u-file">Reconciliar ADIF<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRDLOG',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'?<Button small disabled={busy===p.provider||!p.configured||!p.snapshot?.downloaded_at} onClick={updateHrdlog}>{busy===p.provider?'Processando…':'Atualizar online'}</Button>:p.capabilities?.read&&p.source_kind!=='local_adif'&&<Button small disabled={busy===p.provider||!p.configured||isRunning} onClick={()=>sync(p.provider)}>{isRunning?'Atualizando…':'Atualizar'}</Button>}{p.snapshot?.records>0&&<button className="u-text-danger" disabled={busy===p.provider||isRunning} onClick={()=>clear(p.provider)}>limpar cópia local</button>}</div></Card>})}</div>{config&&<ConnectionModal source={config} onClose={()=>setConfig(null)} onChanged={async()=>{await onChanged();setConfig(null)}}/>}</>
 }
 
 function AdvancedCompare(){
@@ -192,7 +244,7 @@ export default function App900(){
   const [page,setPage]=useState('overview'),[boot,setBoot]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('')
   async function refresh(){const b=await api('/api/product/bootstrap');setBoot(b);return b}
   useEffect(()=>{refresh().catch(e=>setMessage('Erro ao iniciar: '+e.message))},[])
-  async function syncAll(){setBusy(true);setMessage('Atualizando fontes conectadas…');try{const r=await api('/api/product/sync-all',{method:'POST',body:'{}'});const failed=(r.results||[]).filter(x=>!x.ok&&!x.skipped);setMessage(failed.length?`Atualização concluída com ${failed.length} falha(s).`:'Fontes atualizadas e workspace recalculado.');await refresh()}catch(e){setMessage('Erro: '+e.message)}finally{setBusy(false)}}
+  async function syncAll(){setBusy(true);try{const r=await api('/api/product/sync-jobs-all',{method:'POST',body:'{}'});setMessage(r.started?r.started+' fonte(s) iniciada(s) em paralelo. Acompanhe o progresso em Fontes.':'Nenhuma fonte remota configurada para atualizar.');setPage('sources')}catch(e){setMessage('Erro: '+e.message)}finally{setBusy(false)}}
   async function refreshIssues(){try{const [issues,qsl]=await Promise.all([api('/api/product/issues?limit=500'),api('/api/product/qsl')]);setBoot(v=>({...v,issues,qsl}))}catch(e){setMessage('Erro: '+e.message)}}
   const nav=n=>setPage(n)
   return <div className="u-app"><aside className="u-sidebar"><div className="u-brand"><div className="u-brand-mark">PU2BRU</div><span><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></span></div><nav>{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav><div className="u-sidebar-foot"><span className={boot?'ok':''}/><div><b>{boot?'Workspace pronto':'Inicializando'}</b><small>{boot?`${fmt(boot.workspace?.summary?.logical_qsos)} QSOs lógicos`:'validando serviços'}</small></div></div></aside><header className="u-mobile-top"><div><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></div><Button small disabled={busy} onClick={syncAll}>↻</Button></header><main className="u-main">{message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}<button className="u-close" onClick={()=>setMessage('')}>×</button></Notice>}{!boot&&<div className="u-loading-screen"><div className="u-pulse">PU2BRU</div><h2>Montando seu workspace…</h2><p>Validando banco local, frontend e fontes.</p></div>}{boot&&<>{page==='overview'&&<Overview boot={boot} navigate={nav} syncAll={syncAll} busy={busy}/>} {page==='log'&&<LogPage workspace={boot.workspace}/>} {page==='inbox'&&<InboxPage issues={boot.issues} onRefresh={refreshIssues}/>} {page==='qsl'&&<QslPage qsl={boot.qsl} onRefresh={refreshIssues} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='sources'&&<SourcesPage status={boot.status} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='tools'&&<ToolsPage workspace={boot.workspace} status={boot.status} setGlobalMessage={setMessage}/>}</>}</main><nav className="u-bottom">{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav></div>
