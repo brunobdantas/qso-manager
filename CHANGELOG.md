@@ -2,6 +2,8 @@
 
 ## [1.0.1] - 2026-09-24
 
+- corrige a validação LoTW para usar uma consulta pequena, com timeout e mensagens de erro acionáveis;
+
 - executa downloads paralelos das fontes remotas, com até seis integrações simultâneas;
 - adiciona barra de progresso geral e estado individual por fonte;
 - mantém falhas isoladas por provedor sem interromper os demais downloads nem apagar snapshots anteriores;
