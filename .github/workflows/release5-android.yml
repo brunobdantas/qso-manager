@@ -58,6 +58,28 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Install resilient Android HTTP transport
+        shell: bash
+        run: |
+          PACKAGE_DIR="mobile/android/app/src/main/java/net/pu2bru/qsomanager"
+          mkdir -p "$PACKAGE_DIR"
+          cp mobile/native-android/MainActivity.java "$PACKAGE_DIR/MainActivity.java"
+          cp mobile/native-android/ResilientHttpPlugin.java "$PACKAGE_DIR/ResilientHttpPlugin.java"
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("mobile/android/app/build.gradle")
+          text = p.read_text()
+          dep = "    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0'\n"
+          if "okhttp-dnsoverhttps" not in text:
+              marker = "dependencies {\n"
+              if marker not in text:
+                  raise SystemExit("dependencies block not found")
+              text = text.replace(marker, marker + dep, 1)
+          p.write_text(text)
+          PY
+          grep -q 'registerPlugin(ResilientHttpPlugin.class)' "$PACKAGE_DIR/MainActivity.java"
+          grep -q 'okhttp-dnsoverhttps:4.12.0' mobile/android/app/build.gradle
+
       - name: Harden Android network permissions
         shell: bash
         run: |
