@@ -58,15 +58,27 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Resolve mobile version
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./mobile/package.json').version")
+          echo "MOBILE_VERSION=$VERSION" >> "$GITHUB_ENV"
+
       - name: Set Android version
         shell: bash
         run: |
           python - <<'PY'
+          import json
           from pathlib import Path
+
+          version = json.loads(Path("mobile/package.json").read_text())["version"]
+          major, minor, patch = (int(part) for part in version.split("."))
+          version_code = major * 10000 + minor * 100 + patch
+
           p = Path("mobile/android/app/build.gradle")
           text = p.read_text()
-          text = text.replace("versionCode 1", "versionCode 10000")
-          text = text.replace('versionName "1.0"', 'versionName "1.0.0"')
+          text = text.replace("versionCode 1", f"versionCode {version_code}")
+          text = text.replace('versionName "1.0"', f'versionName "{version}"')
           p.write_text(text)
           PY
 
@@ -80,14 +92,15 @@ jobs:
           APK="mobile/android/app/build/outputs/apk/debug/app-debug.apk"
           test -f "$APK"
           mkdir -p dist-android
-          cp "$APK" "dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk"
-          ls -lh dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
-          sha256sum dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
+          OUTPUT="dist-android/PU2BRU-QSO-Manager-v${MOBILE_VERSION}-Android-preview.apk"
+          cp "$APK" "$OUTPUT"
+          ls -lh "$OUTPUT"
+          sha256sum "$OUTPUT"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: PU2BRU-QSO-Manager-Android
-          path: dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
+          path: dist-android/PU2BRU-QSO-Manager-v${{ env.MOBILE_VERSION }}-Android-preview.apk
           if-no-files-found: error
           retention-days: 30
