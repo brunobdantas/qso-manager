@@ -1,63 +1,32 @@
-import { CapacitorHttp } from '@capacitor/core'
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core'
 import { parseAdif, recordToAdif } from './core.js'
+
+const ResilientHttp=registerPlugin('ResilientHttp')
 
 function form(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
 function qs(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
-const NETWORK_RETRY_DELAYS=[0,500,1500]
-function wait(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
-export function isRetryableNetworkError(error){
-  const text=String(error?.message||error||'').toLowerCase()
-  return [
-    'unable to resolve host','no address associated with hostname','unknownhostexception',
-    'failed to connect','connection reset','connection refused','network is unreachable',
-    'timeout','timed out','temporary failure in name resolution'
-  ].some(token=>text.includes(token))
-}
-function browserHeaders(headers={}){
-  const out={}
-  for(const [key,value] of Object.entries(headers||{})){
-    if(String(key).toLowerCase()==='user-agent')continue
-    out[key]=value
-  }
-  return out
-}
-async function requestViaBrowser(options){
-  const controller=new AbortController()
-  const timer=setTimeout(()=>controller.abort(),15000)
-  try{
-    const method=String(options.method||'GET').toUpperCase()
-    const r=await fetch(options.url,{
-      method,
-      headers:browserHeaders(options.headers),
-      body:(method==='GET'||method==='HEAD')?undefined:options.data,
-      signal:controller.signal,
-      cache:'no-store',
-    })
-    const text=await r.text()
-    if(!r.ok)throw new Error('HTTP '+r.status)
-    return {text,url:r.url||options.url,headers:Object.fromEntries(r.headers.entries()),transport:'webview'}
-  }finally{clearTimeout(timer)}
-}
+
 async function request(options){
-  let lastError
-  for(let attempt=0;attempt<NETWORK_RETRY_DELAYS.length;attempt++){
-    if(NETWORK_RETRY_DELAYS[attempt])await wait(NETWORK_RETRY_DELAYS[attempt])
-    try{
-      const r=await CapacitorHttp.request({...options,responseType:'text',connectTimeout:15000,readTimeout:45000})
-      if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
-      return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{},transport:'native'}
-    }catch(error){
-      lastError=error
-      if(!isRetryableNetworkError(error))throw error
+  if(Capacitor.getPlatform()==='android'){
+    const r=await ResilientHttp.request({
+      method:options.method||'GET',
+      url:options.url,
+      headers:options.headers||{},
+      data:typeof options.data==='string'?options.data:(options.data==null?'':JSON.stringify(options.data)),
+    })
+    if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
+    return {
+      text:typeof r.data==='string'?r.data:JSON.stringify(r.data),
+      url:r.url||options.url,
+      headers:r.headers||{},
+      transport:'resilient-native',
+      dnsMode:r.dnsMode||'unknown',
     }
   }
-  try{
-    return await requestViaBrowser(options)
-  }catch(webError){
-    const nativeMessage=String(lastError?.message||lastError||'falha de rede')
-    const webMessage=String(webError?.message||webError||'fallback indisponível')
-    throw new Error('Falha de rede/DNS no Android após novas tentativas. Nativo: '+nativeMessage+' · fallback WebView: '+webMessage)
-  }
+
+  const r=await CapacitorHttp.request({...options,responseType:'text'})
+  if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
+  return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{},transport:'capacitor'}
 }
 async function get(url,params={},headers={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:''),headers})}
 async function postForm(url,data,headers={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data)})}
