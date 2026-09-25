@@ -1,12 +1,32 @@
-import { CapacitorHttp } from '@capacitor/core'
+import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core'
 import { parseAdif, recordToAdif } from './core.js'
+
+const ResilientHttp=registerPlugin('ResilientHttp')
 
 function form(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
 function qs(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
+
 async function request(options){
+  if(Capacitor.getPlatform()==='android'){
+    const r=await ResilientHttp.request({
+      method:options.method||'GET',
+      url:options.url,
+      headers:options.headers||{},
+      data:typeof options.data==='string'?options.data:(options.data==null?'':JSON.stringify(options.data)),
+    })
+    if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
+    return {
+      text:typeof r.data==='string'?r.data:JSON.stringify(r.data),
+      url:r.url||options.url,
+      headers:r.headers||{},
+      transport:'resilient-native',
+      dnsMode:r.dnsMode||'unknown',
+    }
+  }
+
   const r=await CapacitorHttp.request({...options,responseType:'text'})
   if(r.status<200||r.status>=300)throw new Error('HTTP '+r.status)
-  return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{}}
+  return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{},transport:'capacitor'}
 }
 async function get(url,params={},headers={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:''),headers})}
 async function postForm(url,data,headers={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data)})}

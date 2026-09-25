@@ -63,3 +63,4 @@ test('QRZ STATUS count is extracted from all supported response shapes',()=>{
   assert.equal(qrzStatusCount({DATA:'QSOS=5284'}),5284)
   assert.equal(qrzStatusCount({DATA:'Total QSOs: 5284'}),5284)
 })
+

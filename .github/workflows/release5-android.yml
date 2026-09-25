@@ -58,15 +58,66 @@ jobs:
           npx cap add android
           npx cap sync android
 
-      - name: Set Android version
+      - name: Install resilient Android HTTP transport
         shell: bash
         run: |
+          PACKAGE_DIR="mobile/android/app/src/main/java/net/pu2bru/qsomanager"
+          mkdir -p "$PACKAGE_DIR"
+          cp mobile/native-android/MainActivity.java "$PACKAGE_DIR/MainActivity.java"
+          cp mobile/native-android/ResilientHttpPlugin.java "$PACKAGE_DIR/ResilientHttpPlugin.java"
           python - <<'PY'
           from pathlib import Path
           p = Path("mobile/android/app/build.gradle")
           text = p.read_text()
-          text = text.replace("versionCode 1", "versionCode 10000")
-          text = text.replace('versionName "1.0"', 'versionName "1.0.0"')
+          dep = "    implementation 'com.squareup.okhttp3:okhttp-dnsoverhttps:4.12.0'\n"
+          if "okhttp-dnsoverhttps" not in text:
+              marker = "dependencies {\n"
+              if marker not in text:
+                  raise SystemExit("dependencies block not found")
+              text = text.replace(marker, marker + dep, 1)
+          p.write_text(text)
+          PY
+          grep -q 'registerPlugin(ResilientHttpPlugin.class)' "$PACKAGE_DIR/MainActivity.java"
+          grep -q 'okhttp-dnsoverhttps:4.12.0' mobile/android/app/build.gradle
+
+      - name: Harden Android network permissions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("mobile/android/app/src/main/AndroidManifest.xml")
+          text = p.read_text()
+          permissions = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+              '<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />',
+          ]
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace("</manifest>", f"    {permission}\n</manifest>")
+          p.write_text(text)
+          PY
+          grep -q 'android.permission.INTERNET' mobile/android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' mobile/android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_WIFI_STATE' mobile/android/app/src/main/AndroidManifest.xml
+
+      - name: Set Android version
+        shell: bash
+        run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          VERSION_CODE=$((10#$MAJOR * 10000 + 10#$MINOR * 100 + 10#$PATCH))
+          python - "$VERSION" "$VERSION_CODE" <<'PY'
+          import re
+          import sys
+          from pathlib import Path
+
+          version = sys.argv[1]
+          version_code = sys.argv[2]
+          p = Path("mobile/android/app/build.gradle")
+          text = p.read_text()
+          text = re.sub(r"versionCode\s+\d+", f"versionCode {version_code}", text, count=1)
+          text = re.sub(r'versionName\s+"[^"]+"', f'versionName "{version}"', text, count=1)
           p.write_text(text)
           PY
 
@@ -77,17 +128,19 @@ jobs:
       - name: Verify APK
         shell: bash
         run: |
+          VERSION="$(tr -d '\r\n' < VERSION)"
           APK="mobile/android/app/build/outputs/apk/debug/app-debug.apk"
+          OUTPUT="dist-android/PU2BRU-QSO-Manager-v${VERSION}-Android-preview.apk"
           test -f "$APK"
           mkdir -p dist-android
-          cp "$APK" "dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk"
-          ls -lh dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
-          sha256sum dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
+          cp "$APK" "$OUTPUT"
+          ls -lh "$OUTPUT"
+          sha256sum "$OUTPUT"
 
       - name: Upload Android APK
         uses: actions/upload-artifact@v4
         with:
           name: PU2BRU-QSO-Manager-Android
-          path: dist-android/PU2BRU-QSO-Manager-v1.0.0-Android-preview.apk
+          path: dist-android/PU2BRU-QSO-Manager-v*-Android-preview.apk
           if-no-files-found: error
           retention-days: 30

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 
-const VERSION = '1.0.2'
+const VERSION = '1.0.4'
 const NAV = [
   ['overview','Visão geral','⌂'],
   ['log','Log','◎'],
