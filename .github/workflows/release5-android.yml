@@ -60,7 +60,9 @@ jobs:
 
       - name: Resolve mobile version
         shell: bash
-        run: echo "MOBILE_VERSION=$(node -p \"require('./mobile/package.json').version\")" >> "$GITHUB_ENV"
+        run: |
+          VERSION=$(node -p "require('./mobile/package.json').version")
+          echo "MOBILE_VERSION=$VERSION" >> "$GITHUB_ENV"
 
       - name: Set Android version
         shell: bash
