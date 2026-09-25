@@ -1,5 +1,6 @@
 import { CapacitorHttp } from '@capacitor/core'
 import { parseAdif, recordToAdif } from './core.js'
+import { parseQRZResponse } from './qrz_response.js'
 
 function form(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
 function qs(data){const p=new URLSearchParams();Object.entries(data).forEach(([k,v])=>{if(v!=null&&v!=='')p.set(k,String(v))});return p.toString()}
@@ -9,35 +10,67 @@ async function request(options){
   return {text:typeof r.data==='string'?r.data:JSON.stringify(r.data),url:r.url||options.url,headers:r.headers||{}}
 }
 async function get(url,params={},headers={}){const query=qs(params);return request({method:'GET',url:url+(query?(url.includes('?')?'&':'?')+query:''),headers})}
-async function postForm(url,data,headers={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data)})}
-function parsedQuery(text){const p=new URLSearchParams(text);return Object.fromEntries([...p.entries()].map(([k,v])=>[k.toUpperCase(),v]))}
+async function postForm(url,data,headers={},options={}){return request({method:'POST',url,headers:{'Content-Type':'application/x-www-form-urlencoded',...headers},data:form(data),...options})}
+const wait=ms=>new Promise(resolve=>setTimeout(resolve,ms))
 export function normalizeQRZKey(value){return String(value||'').replace(/\s+/g,'').trim()}
+function qrzFailure(message,{auth=false}={}){
+  const error=new Error(message)
+  error.qrzResponse=true
+  error.qrzAuth=auth
+  return error
+}
 function qrzError(data,action){
   const result=String(data.RESULT||'').toUpperCase(), reason=String(data.REASON||'').trim()
   if(result==='AUTH'){
-    throw new Error('QRZ recusou '+action+' por permissão/assinatura. A Logbook API exige uma assinatura QRZ no nível XML ou superior. Resposta: '+(reason||'AUTH'))
+    throw qrzFailure('QRZ recusou '+action+' por permissão/assinatura. A Logbook API exige uma assinatura QRZ no nível XML ou superior. Resposta: '+(reason||'AUTH'),{auth:true})
   }
   if(result==='FAIL'){
     const low=reason.toLowerCase()
-    if(low.includes('key')||low.includes('access')||low.includes('invalid')){
-      throw new Error('QRZ recusou a Logbook API Key. Confira se é a chave do logbook correto (não a senha do QRZ). Resposta: '+(reason||'FAIL'))
+    const auth=low.includes('key')||low.includes('access')||low.includes('invalid')||low.includes('subscription')||low.includes('privilege')||low.includes('permission')
+    if(auth){
+      throw qrzFailure('QRZ recusou a Logbook API Key ou a permissão da conta. Confira se é a chave do logbook correto (não a senha do QRZ) e se a assinatura permite a Logbook API. Resposta: '+(reason||'FAIL'),{auth:true})
     }
-    throw new Error('QRZ recusou '+action+': '+(reason||'FAIL'))
+    throw qrzFailure('QRZ recusou '+action+': '+(reason||'FAIL'))
   }
+}
+function retryableQRZReadError(error){
+  if(error?.qrzResponse)return false
+  const message=String(error?.message||error||'')
+  const http=message.match(/^HTTP\s+(\d+)/i)
+  if(http)return [429,500,502,503,504].includes(Number(http[1]))
+  return true
 }
 async function qrzPost(c,action,option){
   const key=normalizeQRZKey(c?.api_key)
   if(!key)throw new Error('QRZ Logbook API Key não configurada')
-  const payload={KEY:key,ACTION:String(action||'').toUpperCase()}
+  const actionName=String(action||'').toUpperCase()
+  const payload={KEY:key,ACTION:actionName}
   if(option)payload.OPTION=option
-  const r=await postForm('https://logbook.qrz.com/api',payload,{'User-Agent':'PU2BRU-QSO-Manager/1.0.0 (PU2BRU)'})
-  const data=parsedQuery(r.text)
-  qrzError(data,payload.ACTION)
-  return data
+  const attempts=['STATUS','FETCH'].includes(actionName)?3:1
+  let lastError
+  for(let attempt=1;attempt<=attempts;attempt++){
+    try{
+      const r=await postForm(
+        'https://logbook.qrz.com/api',
+        payload,
+        {'User-Agent':'PU2BRU-QSO-Manager/1.0.2 (PU2BRU; Android)'},
+        {connectTimeout:60000,readTimeout:actionName==='FETCH'?180000:60000},
+      )
+      const data=parseQRZResponse(r.text)
+      if(!data.RESULT&&!data.ADIF&&!data.DATA&&!data.COUNT)throw new Error('QRZ retornou resposta vazia ou inválida')
+      qrzError(data,actionName)
+      return data
+    }catch(error){
+      lastError=error
+      if(attempt===attempts||!retryableQRZReadError(error))throw error
+      await wait(Math.min(250*(2**(attempt-1)),1000))
+    }
+  }
+  throw lastError
 }
 function cleanHtml(text){return String(text||'').replace(/<[^>]+>/g,' ').replace(/&nbsp;/gi,' ').replace(/\s+/g,' ').trim()}
 export function qrzStatusCount(data){
-  for(const value of [data.COUNT,data.QSOS,data.DATA]){
+  for(const value of [data.COUNT,data.QSOS,data.QSO_COUNT,data.TOTAL_QSOS,data.DATA]){
     const text=String(value||'').trim()
     if(/^\d+$/.test(text))return Number(text)
     const m=text.match(/(?:TOTAL(?:_QSO)?S?|QSOS?|COUNT)\s*[=:]\s*(\d+)/i)
@@ -105,7 +138,7 @@ export async function fetchQRZ(c){
     }
   }catch(e){
     directError=String(e?.message||e)
-    if(directError.startsWith('QRZ recusou'))throw e
+    if(e?.qrzAuth)throw e
   }
 
   let after=0,pages=0,records=[],seen=new Set()
