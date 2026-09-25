@@ -58,6 +58,27 @@ jobs:
           npx cap add android
           npx cap sync android
 
+      - name: Harden Android network permissions
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("mobile/android/app/src/main/AndroidManifest.xml")
+          text = p.read_text()
+          permissions = [
+              '<uses-permission android:name="android.permission.INTERNET" />',
+              '<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />',
+              '<uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />',
+          ]
+          for permission in permissions:
+              if permission not in text:
+                  text = text.replace("</manifest>", f"    {permission}\n</manifest>")
+          p.write_text(text)
+          PY
+          grep -q 'android.permission.INTERNET' mobile/android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_NETWORK_STATE' mobile/android/app/src/main/AndroidManifest.xml
+          grep -q 'android.permission.ACCESS_WIFI_STATE' mobile/android/app/src/main/AndroidManifest.xml
+
       - name: Set Android version
         shell: bash
         run: |
