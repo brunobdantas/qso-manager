@@ -2,6 +2,14 @@
 
 ## [1.0.2] - 2026-09-24
 
+### Android hotfix — 2026-09-25
+
+- corrige a leitura do QRZ Logbook no Android quando o campo ADIF chega codificado ou duplamente codificado;
+- preserva caracteres literais do ADIF, incluindo valores com `+`, sem corromper o conteúdo ao interpretar a resposta;
+- adiciona timeout ampliado e retentativas limitadas para leituras QRZ em falhas transitórias;
+- mantém o fallback oficial de `FETCH ALL` para paginação por `MAX:250,AFTERLOGID` e preserva o snapshot anterior em download incompleto;
+- alinha automaticamente a versão do APK Android à versão do pacote mobile.
+
 - muda o LoTW de feed de confirmações para **log completo**: QSOs aceitos + QSLs/confirmações;
 - adiciona sincronização incremental LoTW usando `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL`;
 - migra automaticamente snapshots antigos do LoTW que continham somente QSLs;
