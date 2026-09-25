@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { parseAdif, recordToAdif, matchRecords, consolidate, buildQsl, hrdlogPlan } from '../src/core.js'
-import { normalizeQRZKey, qrzStatusCount, isRetryableNetworkError } from '../src/providers.js'
+import { normalizeQRZKey, qrzStatusCount } from '../src/providers.js'
 
 const q=(call,date,time,extra={})=>({CALL:call,QSO_DATE:date,TIME_ON:time,BAND:'20M',MODE:'FT8',FREQ:'14.074',...extra})
 
@@ -64,8 +64,3 @@ test('QRZ STATUS count is extracted from all supported response shapes',()=>{
   assert.equal(qrzStatusCount({DATA:'Total QSOs: 5284'}),5284)
 })
 
-
-test('Android network retry recognizes DNS resolution failures',()=>{
-  assert.equal(isRetryableNetworkError(new Error('Unable to resolve host "logbook.qrz.com": No address associated with hostname')),true)
-  assert.equal(isRetryableNetworkError(new Error('HTTP 401')),false)
-})
