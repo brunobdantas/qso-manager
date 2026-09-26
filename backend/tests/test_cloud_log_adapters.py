@@ -261,6 +261,7 @@ def test_lotw_incremental_sync_uses_both_official_cursors_and_merges_qsl_updates
     result = adapter.fetch_incremental(previous)
 
     assert len(requests) == 2
+    assert [item["qso_qsl"] for item in requests] == ["no", "yes"]
     assert len(result["records"]) == 2
     assert result["metadata"]["incremental"] is True
     assert result["metadata"]["delta_qso_records"] == 1
@@ -271,6 +272,53 @@ def test_lotw_incremental_sync_uses_both_official_cursors_and_merges_qsl_updates
     assert old["LOTW_QSL_RCVD"] == "Y"
     assert old["STATE"] == "SD"
     assert old["GRIDSQUARE"] == "EN12HV"
+
+
+def test_lotw_retries_transient_503_and_preserves_incremental_cursor(monkeypatch):
+    calls = []
+
+    def handler(request):
+        params = dict(request.url.params)
+        calls.append(params)
+        if len(calls) < 3:
+            return httpx.Response(503, text="Service Unavailable")
+        return httpx.Response(
+            200,
+            text=_lotw_report(
+                {"APP_LoTW_LASTQSORX": "2026-09-26 12:00:00", "APP_LoTW_NUMREC": "0"},
+                [],
+            ),
+        )
+
+    monkeypatch.setattr("app.adapters.online_v8.time.sleep", lambda _seconds: None)
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    body = adapter._download(qsl=False, since="2026-09-26 10:00:00")
+    records, errors, header = adapter._parse_report(body)
+
+    assert records == []
+    assert errors == []
+    assert header["APP_LOTW_LASTQSORX"] == "2026-09-26 12:00:00"
+    assert len(calls) == 3
+    assert all(item["qso_qsl"] == "no" for item in calls)
+    assert all(item["qso_qsorxsince"] == "2026-09-26 10:00:00" for item in calls)
+
+
+def test_lotw_reports_persistent_503_without_destroying_snapshot(monkeypatch):
+    def handler(request):
+        return httpx.Response(503, text="Service Unavailable")
+
+    monkeypatch.setattr("app.adapters.online_v8.time.sleep", lambda _seconds: None)
+    adapter = LoTWConfirmationAdapter(
+        {"login": "PU2BRU", "password": "secret"},
+        client=httpx.Client(transport=httpx.MockTransport(handler)),
+    )
+
+    with pytest.raises(CloudProviderError, match="HTTP 503.*snapshot anterior foi preservado"):
+        adapter._download(qsl=True, since="2026-09-26 10:00:00")
 
 
 def test_lotw_old_confirmation_only_snapshot_forces_one_full_migration():

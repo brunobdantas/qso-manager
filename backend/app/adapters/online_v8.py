@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import html
 import re
-from concurrent.futures import ThreadPoolExecutor
+import time
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 from urllib.parse import urljoin
@@ -95,6 +95,8 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
     SYNC_TIMEOUT = httpx.Timeout(240.0, connect=12.0)
     FULL_SYNC_SINCE = "1945-11-15"
     CURSOR_OVERLAP_SECONDS = 600
+    READ_ATTEMPTS = 4
+    RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 
     def _required(self) -> Dict[str, str]:
         login = str(self.credentials.get("login") or self.credentials.get("username") or "").strip()
@@ -280,29 +282,61 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
         }
         if since:
             params["qso_qslsince" if qsl else "qso_qsorxsince"] = since
-        try:
-            response = self.client.get(
-                self.endpoint,
-                params=params,
-                headers={
-                    "User-Agent": self.USER_AGENT,
-                    "Accept": "text/plain,text/html;q=0.8,*/*;q=0.5",
-                },
-                timeout=timeout or self.SYNC_TIMEOUT,
-            )
-            response.raise_for_status()
-        except httpx.TimeoutException as exc:
+
+        response = None
+        last_error: Exception | None = None
+        for attempt in range(1, self.READ_ATTEMPTS + 1):
+            try:
+                response = self.client.get(
+                    self.endpoint,
+                    params=params,
+                    headers={
+                        "User-Agent": self.USER_AGENT,
+                        "Accept": "text/plain,text/html;q=0.8,*/*;q=0.5",
+                    },
+                    timeout=timeout or self.SYNC_TIMEOUT,
+                )
+                if response.status_code not in self.RETRYABLE_STATUS_CODES:
+                    response.raise_for_status()
+                    break
+                if attempt == self.READ_ATTEMPTS:
+                    response.raise_for_status()
+                retry_after = response.headers.get("Retry-After")
+                try:
+                    delay = min(max(float(retry_after), 0.0), 30.0) if retry_after else min(1.0 * (2 ** (attempt - 1)), 8.0)
+                except ValueError:
+                    delay = min(1.0 * (2 ** (attempt - 1)), 8.0)
+                time.sleep(delay)
+                continue
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                if attempt == self.READ_ATTEMPTS:
+                    raise CloudProviderError(
+                        "LoTW não respondeu dentro do tempo esperado após novas tentativas. "
+                        "O snapshot anterior foi preservado."
+                    ) from exc
+            except httpx.HTTPStatusError as exc:
+                last_error = exc
+                status = exc.response.status_code
+                if status not in self.RETRYABLE_STATUS_CODES or attempt == self.READ_ATTEMPTS:
+                    raise CloudProviderError(
+                        f"LoTW retornou HTTP {status} após {attempt} tentativa(s). "
+                        "O snapshot anterior foi preservado."
+                    ) from exc
+            except httpx.RequestError as exc:
+                last_error = exc
+                if attempt == self.READ_ATTEMPTS:
+                    raise CloudProviderError(
+                        "Não foi possível alcançar o serviço do LoTW após novas tentativas. "
+                        "O snapshot anterior foi preservado."
+                    ) from exc
+
+            time.sleep(min(1.0 * (2 ** (attempt - 1)), 8.0))
+
+        if response is None:
             raise CloudProviderError(
-                "LoTW não respondeu dentro do tempo esperado. "
-                "Tente novamente; se persistir, verifique se o site do LoTW está acessível no navegador."
-            ) from exc
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            raise CloudProviderError(f"LoTW retornou HTTP {status}") from exc
-        except httpx.RequestError as exc:
-            raise CloudProviderError(
-                "Não foi possível alcançar o serviço do LoTW. Verifique a conexão e tente novamente."
-            ) from exc
+                "LoTW não retornou resposta após novas tentativas. O snapshot anterior foi preservado."
+            ) from last_error
 
         body = response.text or ""
         if "<EOH>" not in body.upper():
@@ -391,24 +425,19 @@ class LoTWConfirmationAdapter(CloudLogAdapter):
             result["metadata"]["migration_from_confirmation_only"] = bool(previous_records)
             return result
 
-        # QSO acceptance and QSL confirmation deltas are independent.
-        # Fetch both concurrently so the refresh duration is bounded by the
-        # slower LoTW query rather than the sum of the two.
-        with ThreadPoolExecutor(max_workers=2, thread_name_prefix="lotw-delta") as executor:
-            qso_future = executor.submit(
-                self._download,
-                qsl=False,
-                since=str(metadata["lotw_last_qso_rx"]),
-                timeout=self.SYNC_TIMEOUT,
-            )
-            qsl_future = executor.submit(
-                self._download,
-                qsl=True,
-                since=str(metadata["lotw_last_qsl"]),
-                timeout=self.SYNC_TIMEOUT,
-            )
-            qso_body = qso_future.result()
-            qsl_body = qsl_future.result()
+        # LoTW documents QSO and QSL cursor queries as separate reads.
+        # Keep them sequential: issuing both at once can make the LoTW CGI
+        # return transient HTTP 503 responses for the same account/session.
+        qso_body = self._download(
+            qsl=False,
+            since=str(metadata["lotw_last_qso_rx"]),
+            timeout=self.SYNC_TIMEOUT,
+        )
+        qsl_body = self._download(
+            qsl=True,
+            since=str(metadata["lotw_last_qsl"]),
+            timeout=self.SYNC_TIMEOUT,
+        )
         qso_delta, qso_errors, qso_header = self._parse_report(qso_body)
         qsl_delta, qsl_errors, qsl_header = self._parse_report(qsl_body)
 

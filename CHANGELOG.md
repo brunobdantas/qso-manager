@@ -2,6 +2,13 @@
 
 ## [1.0.2] - 2026-09-24
 
+### LoTW incremental hotfix — 2026-09-26
+
+- serializa as consultas incrementais de QSOs e QSLs do LoTW para evitar duas requisições simultâneas à mesma conta;
+- adiciona retentativa limitada para HTTP 429/500/502/503/504, com backoff e suporte a `Retry-After`;
+- preserva o snapshot local quando o LoTW permanece indisponível após as tentativas;
+- adiciona testes de regressão para HTTP 503 e para a ordem sequencial das consultas incrementais.
+
 ### Android hotfix — 2026-09-25
 
 - corrige a leitura do QRZ Logbook no Android quando o campo ADIF chega codificado ou duplamente codificado;
