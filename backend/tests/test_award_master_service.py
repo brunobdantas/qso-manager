@@ -308,11 +308,11 @@ def test_confirmed_lotw_history_can_normalize_qrz_only_zone_with_two_observation
         ),
         adif_record(
             CALL="DL1XYZ", QSO_DATE="20260921", TIME_ON="100000", BAND="12M",
-            MODE="FT8", DXCC="230", GRIDSQUARE="JO61BB", CQZ="14", ITUZ="28",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="14", ITUZ="28",
         ),
         adif_record(
             CALL="DL1XYZ", QSO_DATE="20260922", TIME_ON="100000", BAND="15M",
-            MODE="FT8", DXCC="230", GRIDSQUARE="JO61CC", CQZ="34", ITUZ="14",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="34", ITUZ="14",
         ),
     )
     lotw = adif(
@@ -323,7 +323,7 @@ def test_confirmed_lotw_history_can_normalize_qrz_only_zone_with_two_observation
         ),
         adif_record(
             CALL="DL1XYZ", QSO_DATE="20260921", TIME_ON="100000", BAND="12M",
-            MODE="FT8", DXCC="230", GRIDSQUARE="JO61BB", CQZ="14", ITUZ="28",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="14", ITUZ="28",
             QSL_RCVD="Y",
         ),
     )
@@ -332,8 +332,8 @@ def test_confirmed_lotw_history_can_normalize_qrz_only_zone_with_two_observation
 
     assert result["content"].count("<CQZ:2>14") == 3
     assert result["content"].count("<ITUZ:2>28") == 3
-    assert result["report"]["data_quality"]["cqz_normalized_by_lotw_history"] == 1
-    assert result["report"]["data_quality"]["ituz_normalized_by_lotw_history"] == 1
+    assert result["report"]["data_quality"]["cqz_normalized_by_same_call_lotw_history"] == 1
+    assert result["report"]["data_quality"]["ituz_normalized_by_same_call_lotw_history"] == 1
 
 
 def test_qrz_only_plausible_grid_is_never_removed_without_source_native_evidence():
@@ -350,4 +350,85 @@ def test_qrz_only_plausible_grid_is_never_removed_without_source_native_evidence
 
     assert "<GRIDSQUARE:6>FK68KJ" in result["content"]
     assert "<CQZ:1>8" in result["content"]
+
+def test_qrz_lotw_zone_consensus_is_never_overridden_by_other_calls_history():
+    qrz = adif(
+        adif_record(
+            CALL="W3GLH", QSO_DATE="20150531", TIME_ON="200500", BAND="10M",
+            MODE="SSB", DXCC="291", GRIDSQUARE="EN91VC", CQZ="5", ITUZ="8",
+        ),
+    )
+    lotw = adif(
+        adif_record(
+            CALL="W3GLH", QSO_DATE="20150531", TIME_ON="200500", BAND="10M",
+            MODE="SSB", DXCC="291", GRIDSQUARE="EN91VC", CQZ="05", ITUZ="08",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="K3AAA", QSO_DATE="20260101", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EN91AA", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="K3BBB", QSO_DATE="20260102", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EN91BB", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:1>5" in result["content"]
+    assert "<ITUZ:1>8" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:9>CONSENSUS" in result["content"]
+    assert result["report"]["data_quality"].get("cqz_normalized_by_same_call_lotw_history", 0) == 0
+
+
+def test_cross_callsign_dxcc_grid_history_never_changes_qrz_only_zone():
+    qrz = adif(adif_record(
+        CALL="K8FER", QSO_DATE="20150606", TIME_ON="211900", BAND="12M",
+        MODE="PSK63", DXCC="291", GRIDSQUARE="EM88VK", CQZ="5", ITUZ="8",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="K8AAA", QSO_DATE="20260101", TIME_ON="100000", BAND="12M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EM88AA", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="K8BBB", QSO_DATE="20260102", TIME_ON="100000", BAND="12M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EM88BB", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:1>5" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:3>QRZ" in result["content"]
+    assert result["report"]["data_quality"].get("cqz_normalized_by_same_call_lotw_history", 0) == 0
+
+
+def test_zone_leading_zero_is_equivalent_source_consensus():
+    qrz = adif(adif_record(
+        CALL="KF5SFJ", QSO_DATE="20150606", TIME_ON="212600", BAND="12M",
+        MODE="PSK63", DXCC="291", GRIDSQUARE="EM50LJ", CQZ="4", ITUZ="7",
+    ))
+    lotw = adif(adif_record(
+        CALL="KF5SFJ", QSO_DATE="20150606", TIME_ON="212600", BAND="12M",
+        MODE="PSK63", DXCC="291", GRIDSQUARE="EM50LJ", CQZ="04", ITUZ="07",
+        QSL_RCVD="Y",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:1>4" in result["content"]
+    assert "<ITUZ:1>7" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:9>CONSENSUS" in result["content"]
+    assert "<APP_QSOMGR_ITUZ_SOURCE:9>CONSENSUS" in result["content"]
+    zone_conflicts = [
+        item for item in result["report"]["conflicts"]["items"]
+        if item.get("field") in {"CQZ", "ITUZ"}
+    ]
+    assert zone_conflicts == []
 
