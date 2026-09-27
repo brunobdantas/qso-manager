@@ -432,3 +432,77 @@ def test_zone_leading_zero_is_equivalent_source_consensus():
     ]
     assert zone_conflicts == []
 
+def test_cross_callsign_geo_consensus_corrects_only_qrz_derived_grid4_zone_with_five_confirmations():
+    qrz = adif(adif_record(
+        CALL="KK9AWA", QSO_DATE="20260422", TIME_ON="001000", BAND="10M",
+        MODE="FT8", DXCC="291", GRIDSQUARE="EN52", CQZ="37", ITUZ="99",
+    ))
+    lotw_rows = []
+    for i, call in enumerate(("K9A", "K9B", "K9C", "K9D", "K9E")):
+        lotw_rows.append(adif_record(
+            CALL=call, QSO_DATE=f"20260{1+i}01", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EN52", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ))
+
+    result = AwardMasterService().build(qrz, adif(*lotw_rows))
+
+    assert "<CQZ:1>4" in result["content"]
+    assert "<ITUZ:1>8" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:18>LOTW_GEO_CONSENSUS" in result["content"]
+    assert "<APP_QSOMGR_ITUZ_SOURCE:18>LOTW_GEO_CONSENSUS" in result["content"]
+    assert result["report"]["data_quality"]["cqz_normalized_by_lotw_geo_consensus"] == 1
+    assert result["report"]["data_quality"]["ituz_normalized_by_lotw_geo_consensus"] == 1
+
+
+def test_cross_callsign_geo_consensus_never_overrides_qrz_lotw_consensus_even_with_five_confirmations():
+    qrz = adif(adif_record(
+        CALL="W3GLH", QSO_DATE="20150531", TIME_ON="200500", BAND="10M",
+        MODE="SSB", DXCC="291", GRIDSQUARE="EN91VC", CQZ="5", ITUZ="8",
+    ))
+    lotw_rows = [
+        adif_record(
+            CALL="W3GLH", QSO_DATE="20150531", TIME_ON="200500", BAND="10M",
+            MODE="SSB", DXCC="291", GRIDSQUARE="EN91VC", CQZ="05", ITUZ="08",
+            QSL_RCVD="Y",
+        )
+    ]
+    for i, call in enumerate(("K3A", "K3B", "K3C", "K3D", "K3E")):
+        lotw_rows.append(adif_record(
+            CALL=call, QSO_DATE=f"20260{1+i}02", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="291", GRIDSQUARE="EN91", CQZ="4", ITUZ="8",
+            QSL_RCVD="Y",
+        ))
+
+    result = AwardMasterService().build(qrz, adif(*lotw_rows))
+
+    assert "<CQZ:1>5" in result["content"]
+    assert "<ITUZ:1>8" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:9>CONSENSUS" in result["content"]
+    assert result["report"]["data_quality"].get("cqz_normalized_by_lotw_geo_consensus", 0) == 0
+
+
+def test_grid6_geo_consensus_requires_only_two_unanimous_confirmations_for_qrz_derived_zone():
+    qrz = adif(adif_record(
+        CALL="CX2JO", QSO_DATE="20260705", TIME_ON="134400", BAND="15M",
+        MODE="FT8", DXCC="144", GRIDSQUARE="GF18AO", CQZ="2", ITUZ="1",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="CX1AA", QSO_DATE="20260101", TIME_ON="100000", BAND="15M",
+            MODE="FT8", DXCC="144", GRIDSQUARE="GF18AO", CQZ="13", ITUZ="14",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="CX2BB", QSO_DATE="20260102", TIME_ON="100000", BAND="15M",
+            MODE="FT8", DXCC="144", GRIDSQUARE="GF18AO", CQZ="13", ITUZ="14",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:2>13" in result["content"]
+    assert "<ITUZ:2>14" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:18>LOTW_GEO_CONSENSUS" in result["content"]
+
