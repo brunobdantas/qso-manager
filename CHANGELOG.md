@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.3] - 2026-09-27
+
+### Award Master Safe V2
+
+- elimina placeholders inválidos de IOTA sem alterar os logs de origem;
+- usa os sinalizadores nativos `APP_LOTW_*_INVALID` e `APP_LOTW_*_INFERRED` para corrigir ou retirar somente metadados explicitamente invalidados pelo LoTW;
+- mantém o UltimateAAC exclusivamente como validador externo, nunca como fonte de correção;
+- preserva o QRZ em conflitos CQ/ITU não explicados quando QRZ e LoTW descrevem a mesma localização, registrando o caso na auditoria;
+- usa consenso de histórico LoTW confirmado, com pelo menos duas observações coerentes, para normalizar CQZ/ITUZ;
+- dá preferência ao IOTA confirmado pelo LoTW quando houver conflito;
+- não remove grids plausíveis sem evidência nativa; grids explicitamente marcados como inválidos pelo LoTW são descartados ou substituídos;
+- adiciona métricas de qualidade e testes de regressão para os casos identificados na validação do UltimateAAC.
+
 ## [1.0.2] - 2026-09-24
 
 ### LoTW incremental hotfix — 2026-09-26
