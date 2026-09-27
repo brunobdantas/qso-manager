@@ -12,6 +12,7 @@ from dataclasses import dataclass
 import csv
 import hashlib
 import io
+import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 from ..adapters.cloud_logs import records_to_adif
@@ -29,7 +30,10 @@ US_STATES = {
 }
 
 IDENTITY_FIELDS = ("CALL", "QSO_DATE", "TIME_ON", "BAND", "MODE", "SUBMODE", "FREQ")
-LOTW_AUTHORITY_FIELDS = ("STATE", "CNTY", "DXCC", "COUNTRY", "CQZ", "ITUZ", "PFX", "CONT")
+LOTW_AUTHORITY_FIELDS = ("STATE", "CNTY", "DXCC", "COUNTRY", "PFX", "CONT")
+ZONE_FIELDS = ("CQZ", "ITUZ")
+INVALID_IOTA_VALUES = {"NONE", "BLANK", "- NONE", "-NONE", "N/A", "NA", "UNKNOWN", "NULL", "-"}
+GRID_RE = re.compile(r"^[A-R]{2}[0-9]{2}(?:[A-X]{2})?$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -49,8 +53,10 @@ class AwardMasterService:
     MAX_AUDIT_ITEMS = 500
 
     def build(self, qrz_content: str, lotw_content: str) -> Dict[str, Any]:
+        self._sanitization = defaultdict(int)
         qrz_records, qrz_errors = self._parse(qrz_content, "QRZ")
         lotw_records, lotw_errors = self._parse(lotw_content, "LoTW")
+        lotw_consensus = self._build_lotw_location_consensus(lotw_records)
         pairs, qrz_unmatched, lotw_unmatched, ambiguous = self._match(qrz_records, lotw_records)
 
         merged: List[Dict[str, Any]] = []
@@ -78,6 +84,7 @@ class AwardMasterService:
             merged.append(record)
             field_sources["LOTW"] += len(record)
 
+        self._apply_lotw_location_consensus(merged, lotw_consensus, conflicts)
         merged.sort(key=self._sort_key)
 
         source_metrics = {
@@ -106,6 +113,10 @@ class AwardMasterService:
                 "ambiguous_pairs_are_never_merged": True,
                 "export_blocked_on_critical_coverage_regression": True,
                 "conflicting_grid_regression_is_audited_warning": True,
+                "ultimateaac_is_validator_not_source": True,
+                "lotw_explicit_invalid_flags_are_authoritative": True,
+                "unexplained_source_conflicts_are_audited": True,
+                "invalid_iota_placeholders_are_omitted": True,
             },
             "sources": {
                 "QRZ": {
@@ -142,6 +153,7 @@ class AwardMasterService:
                 "items": conflicts[: self.MAX_AUDIT_ITEMS],
             },
             "ambiguous": ambiguous[: self.MAX_AUDIT_ITEMS],
+            "data_quality": dict(self._sanitization),
         }
 
         content = self._write_adif(merged)
@@ -267,8 +279,7 @@ class AwardMasterService:
             raise AwardMasterError(f"Nenhum QSO válido foi encontrado no arquivo {label}")
         return records, errors
 
-    @staticmethod
-    def _clean_record(record: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
         cleaned: Dict[str, Any] = {}
         for key, value in record.items():
             if value is None:
@@ -276,7 +287,11 @@ class AwardMasterService:
             name = str(key).strip().upper()
             if not name:
                 continue
-            cleaned[name] = value.strip() if isinstance(value, str) else value
+            normalized = value.strip() if isinstance(value, str) else value
+            if name == "IOTA" and self._text(normalized).upper() in INVALID_IOTA_VALUES:
+                self._sanitization["iota_placeholder_removed"] += 1
+                continue
+            cleaned[name] = normalized
         return cleaned
 
     def _match(
@@ -370,22 +385,63 @@ class AwardMasterService:
             if self._empty(lv):
                 continue
             if not self._empty(qv) and not self._equivalent(field, qv, lv):
-                conflicts.append(self._conflict(qrz, lotw, field, qv, lv, lv, "lotw", "LoTW prevalece para identidade geográfica de award."))
+                conflicts.append(self._conflict(
+                    qrz, lotw, field, qv, lv, lv, "lotw",
+                    "LoTW confirmado prevalece para este metadado geográfico de award."
+                ))
             result[field] = lv
             source_counts["LOTW"] += 1
 
+        for field in ZONE_FIELDS:
+            chosen_zone, zone_winner, zone_reason = self._choose_zone(field, qrz, lotw)
+            qv, lv = qrz.get(field), lotw.get(field)
+            if chosen_zone:
+                result[field] = chosen_zone
+                source_counts["LOTW" if zone_winner.startswith("lotw") else "QRZ"] += 1
+                if zone_winner not in {"consensus", "qrz", "lotw"}:
+                    result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
+            else:
+                result.pop(field, None)
+                result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
+            if (not self._empty(qv) or not self._empty(lv)) and (
+                not chosen_zone or
+                (not self._empty(qv) and not self._equivalent(field, qv, chosen_zone)) or
+                (not self._empty(lv) and not self._equivalent(field, lv, chosen_zone))
+            ):
+                conflicts.append(self._conflict(
+                    qrz, lotw, field, qv, lv, chosen_zone, zone_winner,
+                    zone_reason, severity="warning"
+                ))
+
         q_grid, l_grid = self._text(qrz.get("GRIDSQUARE")).upper(), self._text(lotw.get("GRIDSQUARE")).upper()
-        chosen_grid, grid_reason = self._choose_grid(q_grid, l_grid, lotw)
+        chosen_grid, grid_winner, grid_reason = self._choose_grid(q_grid, l_grid, lotw)
         if chosen_grid:
             result["GRIDSQUARE"] = chosen_grid
-            source_counts["LOTW" if chosen_grid == l_grid and l_grid else "QRZ"] += 1
-        if q_grid and l_grid and q_grid != l_grid and q_grid[:4] != l_grid[:4]:
-            conflicts.append(self._conflict(qrz, lotw, "GRIDSQUARE", q_grid, l_grid, chosen_grid, "review", grid_reason, severity="warning"))
+            source_counts["LOTW" if grid_winner == "lotw" else "QRZ"] += 1
+        else:
+            result.pop("GRIDSQUARE", None)
+        if (q_grid or l_grid) and (chosen_grid != q_grid or (l_grid and chosen_grid != l_grid)):
+            conflicts.append(self._conflict(
+                qrz, lotw, "GRIDSQUARE", q_grid, l_grid, chosen_grid, grid_winner,
+                grid_reason, severity="warning"
+            ))
 
-        if not self._empty(qrz.get("IOTA")):
-            result["IOTA"] = qrz["IOTA"]
-        elif not self._empty(lotw.get("IOTA")):
+        q_iota = self._text(qrz.get("IOTA")).upper()
+        l_iota = self._text(lotw.get("IOTA")).upper()
+        if l_iota and self._lotw_confirmed(lotw):
             result["IOTA"] = lotw["IOTA"]
+            if q_iota and q_iota != l_iota:
+                conflicts.append(self._conflict(
+                    qrz, lotw, "IOTA", qrz.get("IOTA"), lotw.get("IOTA"), lotw.get("IOTA"),
+                    "lotw", "IOTA confirmado pelo LoTW prevalece sobre metadado conflitante do QRZ.",
+                    severity="warning",
+                ))
+        elif q_iota:
+            result["IOTA"] = qrz["IOTA"]
+        elif l_iota:
+            result["IOTA"] = lotw["IOTA"]
+        else:
+            result.pop("IOTA", None)
 
         # MODE may legitimately be encoded differently by providers
         # (e.g. QRZ MODE=FT4 versus LoTW MODE=MFSK/SUBMODE=FT4).
@@ -446,16 +502,168 @@ class AwardMasterService:
             record["LOTW_QSL_SENT"] = "Y"
         return record
 
-    def _choose_grid(self, qrz: str, lotw: str, lotw_record: Dict[str, Any]) -> Tuple[str, str]:
+    def _choose_grid(
+        self, qrz: str, lotw: str, lotw_record: Dict[str, Any]
+    ) -> Tuple[str, str, str]:
+        invalid = self._text(lotw_record.get("APP_LOTW_GRIDSQUARE_INVALID")).upper()
+        if invalid and qrz and self._same_grid_value(qrz, invalid):
+            self._sanitization["lotw_explicit_invalid_grid_removed"] += 1
+            if lotw and not self._same_grid_value(lotw, invalid):
+                return lotw, "lotw", "LoTW marcou explicitamente o grid do QRZ como inválido e forneceu substituto."
+            return "", "lotw_invalid", "LoTW marcou explicitamente o grid do QRZ como inválido; nenhum substituto válido foi fornecido."
         if not qrz:
-            return lotw, "QRZ sem grid; usado LoTW."
+            return lotw, "lotw" if lotw else "none", "QRZ sem grid; usado LoTW quando disponível."
         if not lotw:
-            return qrz, "LoTW sem grid; preservado QRZ."
+            return qrz, "qrz", "LoTW sem grid válido; preservado QRZ."
         if qrz[:4] == lotw[:4]:
-            return (qrz if len(qrz) >= len(lotw) else lotw), "Mesmo grid-base; preservada a maior precisão."
-        if self._text(lotw_record.get("STATE")).upper() in US_STATES:
-            return lotw, "Conflito de grid em QSO dos EUA; LoTW prevalece para reduzir Grid-State mismatch."
-        return lotw, "Conflito geográfico entre fontes; LoTW prevalece e o caso permanece auditado."
+            chosen = qrz if len(qrz) >= len(lotw) else lotw
+            return chosen, "qrz" if chosen == qrz else "lotw", "Mesmo grid-base; preservada a maior precisão."
+        if self._lotw_confirmed(lotw_record):
+            return lotw, "lotw", "Grids válidos divergem; localização confirmada pelo LoTW prevalece e o conflito permanece auditado."
+        return qrz, "qrz", "Grids divergem sem confirmação LoTW; preservado QRZ e o conflito permanece auditado."
+
+    def _choose_zone(
+        self, field: str, qrz: Dict[str, Any], lotw: Dict[str, Any]
+    ) -> Tuple[str, str, str]:
+        qv = self._text(qrz.get(field)).upper()
+        lv = self._text(lotw.get(field)).upper()
+        invalid_field = f"APP_LOTW_{field}_INVALID"
+        inferred_field = f"APP_LOTW_{field}_INFERRED"
+        invalid = self._text(lotw.get(invalid_field)).upper()
+        inferred = self._text(lotw.get(inferred_field)).upper() == "Y"
+
+        if invalid and qv and qv == invalid:
+            self._sanitization[f"lotw_explicit_invalid_{field.lower()}"] += 1
+            if lv and lv != invalid:
+                return lv, "lotw_corrected", f"LoTW marcou {field}={invalid} como inválido e forneceu {lv}."
+            return "", "lotw_invalid", f"LoTW marcou {field}={invalid} como inválido e não forneceu substituto."
+
+        if inferred and lv:
+            if qv and qv != lv:
+                self._sanitization[f"lotw_inferred_{field.lower()}_used"] += 1
+            return lv, "lotw_inferred", f"LoTW forneceu {field} inferido explicitamente."
+
+        if not qv:
+            return lv, "lotw" if lv else "none", f"QRZ sem {field}; usado LoTW quando disponível."
+        if not lv:
+            return qv, "qrz", f"LoTW sem {field}; preservado QRZ."
+        if qv == lv:
+            return qv, "consensus", f"QRZ e LoTW concordam em {field}."
+
+        q_grid = self._text(qrz.get("GRIDSQUARE")).upper()
+        l_grid = self._text(lotw.get("GRIDSQUARE")).upper()
+        same_grid = bool(q_grid and l_grid and q_grid[:4] == l_grid[:4])
+        same_dxcc = bool(
+            self._text(qrz.get("DXCC")) and
+            self._text(qrz.get("DXCC")) == self._text(lotw.get("DXCC"))
+        )
+        if same_grid and same_dxcc and not invalid and not inferred:
+            self._sanitization[f"unexplained_{field.lower()}_conflict_kept_qrz"] += 1
+            return qv, "qrz_review", (
+                f"QRZ e LoTW descrevem a mesma localização (DXCC/grid-base), mas divergem em {field}; "
+                "sem sinalizador nativo de correção do LoTW, o QRZ foi preservado e o caso ficou auditado."
+            )
+        if self._lotw_confirmed(lotw):
+            return lv, "lotw", f"Fontes divergem em {field}; LoTW confirmado prevalece e o conflito permanece auditado."
+        return qv, "qrz", f"Fontes divergem em {field} sem confirmação LoTW; preservado QRZ."
+
+    def _build_lotw_location_consensus(
+        self, records: Sequence[Dict[str, Any]]
+    ) -> Dict[str, Dict[Tuple[str, ...], Dict[str, str]]]:
+        buckets: Dict[str, Dict[Tuple[str, ...], Dict[str, List[str]]]] = {
+            "call_grid": defaultdict(lambda: defaultdict(list)),
+            "dxcc_grid": defaultdict(lambda: defaultdict(list)),
+        }
+        for record in records:
+            if not self._lotw_confirmed(record):
+                continue
+            grid = self._text(record.get("GRIDSQUARE")).upper()
+            dxcc = self._text(record.get("DXCC"))
+            call = self._text(record.get("CALL")).upper()
+            if len(grid) < 4 or not dxcc:
+                continue
+            grid4 = grid[:4]
+            for field in ZONE_FIELDS:
+                value = self._text(record.get(field)).upper()
+                invalid = self._text(record.get(f"APP_LOTW_{field}_INVALID")).upper()
+                if not value or value == invalid:
+                    continue
+                if call:
+                    buckets["call_grid"][(call, dxcc, grid4)][field].append(value)
+                buckets["dxcc_grid"][(dxcc, grid4)][field].append(value)
+
+        result: Dict[str, Dict[Tuple[str, ...], Dict[str, str]]] = {
+            "call_grid": {},
+            "dxcc_grid": {},
+        }
+        for kind, groups in buckets.items():
+            for key, fields in groups.items():
+                accepted: Dict[str, str] = {}
+                for field, values in fields.items():
+                    counts = defaultdict(int)
+                    for value in values:
+                        counts[value] += 1
+                    ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
+                    value, count = ranked[0]
+                    total = len(values)
+                    if kind == "call_grid":
+                        if total >= 2 and count == total:
+                            accepted[field] = value
+                    elif total >= 2 and count >= 2 and (count / total) >= 0.80:
+                        accepted[field] = value
+                if accepted:
+                    result[kind][key] = accepted
+        return result
+
+    def _apply_lotw_location_consensus(
+        self,
+        records: Sequence[Dict[str, Any]],
+        consensus: Dict[str, Dict[Tuple[str, ...], Dict[str, str]]],
+        conflicts: List[Dict[str, Any]],
+    ) -> None:
+        for record in records:
+            grid = self._text(record.get("GRIDSQUARE")).upper()
+            dxcc = self._text(record.get("DXCC"))
+            call = self._text(record.get("CALL")).upper()
+            if len(grid) < 4 or not dxcc:
+                continue
+            call_values = consensus.get("call_grid", {}).get((call, dxcc, grid[:4]), {})
+            dxcc_values = consensus.get("dxcc_grid", {}).get((dxcc, grid[:4]), {})
+            for field in ZONE_FIELDS:
+                if self._text(record.get(f"APP_LOTW_{field}_INFERRED")).upper() == "Y":
+                    continue
+                if self._text(record.get(f"APP_QSOMGR_{field}_SOURCE")).upper() in {
+                    "QRZ_REVIEW", "LOTW_CORRECTED", "LOTW_INFERRED", "LOTW_INVALID"
+                }:
+                    continue
+                candidate = call_values.get(field) or dxcc_values.get(field)
+                current = self._text(record.get(field)).upper()
+                if not candidate or not current or candidate == current:
+                    continue
+                source = "same-call LoTW history" if call_values.get(field) else "DXCC/grid LoTW consensus"
+                conflicts.append(self._conflict(
+                    record, {}, field, current, candidate, candidate, "lotw_history",
+                    f"{field} normalizado por {source} confirmado, sem consulta ao UltimateAAC.",
+                    severity="warning",
+                ))
+                record[field] = candidate
+                record[f"APP_QSOMGR_{field}_SOURCE"] = "LOTW_HISTORY"
+                self._sanitization[f"{field.lower()}_normalized_by_lotw_history"] += 1
+
+    @staticmethod
+    def _lotw_confirmed(record: Dict[str, Any]) -> bool:
+        return (
+            str(record.get("QSL_RCVD") or "").strip().upper() == "Y"
+            or str(record.get("APP_LOTW_2XQSL") or "").strip().upper() == "Y"
+            or str(record.get("LOTW_QSL_RCVD") or "").strip().upper() == "Y"
+        )
+
+    @staticmethod
+    def _same_grid_value(a: str, b: str) -> bool:
+        left, right = str(a or "").strip().upper(), str(b or "").strip().upper()
+        if not left or not right:
+            return False
+        return left == right or (len(left) >= 4 and len(right) >= 4 and left[:4] == right[:4])
 
     def _coverage_regressions(
         self, source_metrics: Dict[str, Dict[str, int]], master: Dict[str, int]
