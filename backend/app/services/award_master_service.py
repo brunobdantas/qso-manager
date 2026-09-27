@@ -398,8 +398,11 @@ class AwardMasterService:
             if chosen_zone:
                 result[field] = chosen_zone
                 source_counts["LOTW" if zone_winner.startswith("lotw") else "QRZ"] += 1
+                if zone_winner not in {"consensus", "qrz", "lotw"}:
+                    result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
             else:
                 result.pop(field, None)
+                result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
             if (not self._empty(qv) or not self._empty(lv)) and (
                 not chosen_zone or
                 (not self._empty(qv) and not self._equivalent(field, qv, chosen_zone)) or
@@ -604,7 +607,7 @@ class AwardMasterService:
                     value, count = ranked[0]
                     total = len(values)
                     if kind == "call_grid":
-                        if count == total:
+                        if total >= 2 and count == total:
                             accepted[field] = value
                     elif total >= 2 and count >= 2 and (count / total) >= 0.80:
                         accepted[field] = value
@@ -628,6 +631,10 @@ class AwardMasterService:
             dxcc_values = consensus.get("dxcc_grid", {}).get((dxcc, grid[:4]), {})
             for field in ZONE_FIELDS:
                 if self._text(record.get(f"APP_LOTW_{field}_INFERRED")).upper() == "Y":
+                    continue
+                if self._text(record.get(f"APP_QSOMGR_{field}_SOURCE")).upper() in {
+                    "QRZ_REVIEW", "LOTW_CORRECTED", "LOTW_INFERRED", "LOTW_INVALID"
+                }:
                     continue
                 candidate = call_values.get(field) or dxcc_values.get(field)
                 current = self._text(record.get(field)).upper()
