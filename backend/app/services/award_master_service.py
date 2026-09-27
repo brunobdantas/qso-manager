@@ -125,7 +125,9 @@ class AwardMasterService:
                 "invalid_iota_placeholders_are_omitted": True,
                 "source_consensus_is_never_overridden_by_history": True,
                 "history_normalization_requires_same_call_dxcc_and_grid": True,
-                "cross_callsign_dxcc_grid_consensus_disabled": True,
+                "cross_callsign_dxcc_grid_consensus_only_for_qrz_derived_zones": True,
+                "cross_callsign_grid6_requires_two_unanimous_lotw": True,
+                "cross_callsign_grid4_requires_five_unanimous_lotw": True,
             },
             "sources": {
                 "QRZ": {
@@ -578,12 +580,17 @@ class AwardMasterService:
     def _build_lotw_location_consensus(
         self, records: Sequence[Dict[str, Any]]
     ) -> Dict[str, Dict[Tuple[str, ...], Dict[str, str]]]:
-        # Historical normalization is deliberately restricted to the SAME
-        # callsign, DXCC and grid. Different stations in the same DXCC/grid
-        # are never used to correct one another.
+        # Two evidence layers are built from confirmed LoTW metadata:
+        # 1) same callsign + DXCC + grid (strongest historical evidence);
+        # 2) same DXCC + grid across different callsigns (geographic evidence).
+        #
+        # The second layer is NEVER allowed to override QRZ+LoTW consensus.
+        # It is only used when the selected zone still comes exclusively from QRZ.
         buckets: Dict[str, Dict[Tuple[str, ...], Dict[str, List[str]]]] = {
             "call_grid4": defaultdict(lambda: defaultdict(list)),
             "call_grid6": defaultdict(lambda: defaultdict(list)),
+            "dxcc_grid4": defaultdict(lambda: defaultdict(list)),
+            "dxcc_grid6": defaultdict(lambda: defaultdict(list)),
         }
         for record in records:
             if not self._lotw_confirmed(record):
@@ -591,11 +598,17 @@ class AwardMasterService:
             grid = self._text(record.get("GRIDSQUARE")).upper()
             dxcc = self._text(record.get("DXCC"))
             call = self._text(record.get("CALL")).upper()
-            if len(grid) < 4 or not dxcc or not call:
+            if len(grid) < 4 or not dxcc:
                 continue
-            keys = [("call_grid4", (call, dxcc, grid[:4]))]
+
+            keys = [("dxcc_grid4", (dxcc, grid[:4]))]
+            if call:
+                keys.append(("call_grid4", (call, dxcc, grid[:4])))
             if len(grid) >= 6:
-                keys.append(("call_grid6", (call, dxcc, grid[:6])))
+                keys.append(("dxcc_grid6", (dxcc, grid[:6])))
+                if call:
+                    keys.append(("call_grid6", (call, dxcc, grid[:6])))
+
             for field in ZONE_FIELDS:
                 value = self._zone_value(record.get(field))
                 invalid = self._zone_value(record.get(f"APP_LOTW_{field}_INVALID"))
@@ -607,8 +620,11 @@ class AwardMasterService:
         result: Dict[str, Dict[Tuple[str, ...], Dict[str, str]]] = {
             "call_grid4": {},
             "call_grid6": {},
+            "dxcc_grid4": {},
+            "dxcc_grid6": {},
         }
         for kind, groups in buckets.items():
+            minimum = 5 if kind == "dxcc_grid4" else 2
             for key, fields in groups.items():
                 accepted: Dict[str, str] = {}
                 for field, values in fields.items():
@@ -618,8 +634,7 @@ class AwardMasterService:
                     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
                     value, count = ranked[0]
                     total = len(values)
-                    # At least two confirmed observations and unanimity.
-                    if total >= 2 and count == total:
+                    if total >= minimum and count == total:
                         accepted[field] = value
                 if accepted:
                     result[kind][key] = accepted
@@ -635,41 +650,78 @@ class AwardMasterService:
             grid = self._text(record.get("GRIDSQUARE")).upper()
             dxcc = self._text(record.get("DXCC"))
             call = self._text(record.get("CALL")).upper()
-            if len(grid) < 4 or not dxcc or not call:
+            if len(grid) < 4 or not dxcc:
                 continue
 
-            if len(grid) >= 6:
+            call_values: Dict[str, str] = {}
+            call_scope = ""
+            if call and len(grid) >= 6:
                 call_values = consensus.get("call_grid6", {}).get((call, dxcc, grid[:6]), {})
-                history_scope = "same-call/DXCC/grid6"
-            else:
+                if call_values:
+                    call_scope = "same-call/DXCC/grid6"
+            if call and not call_values:
                 call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
-                history_scope = "same-call/DXCC/grid4"
+                if call_values:
+                    call_scope = "same-call/DXCC/grid4"
+
+            geo_values: Dict[str, str] = {}
+            geo_scope = ""
+            if len(grid) >= 6:
+                geo_values = consensus.get("dxcc_grid6", {}).get((dxcc, grid[:6]), {})
+                if geo_values:
+                    geo_scope = "DXCC/grid6"
+            if not geo_values:
+                geo_values = consensus.get("dxcc_grid4", {}).get((dxcc, grid[:4]), {})
+                if geo_values:
+                    geo_scope = "DXCC/grid4"
 
             for field in ZONE_FIELDS:
                 current = self._zone_value(record.get(field))
                 source = self._text(record.get(f"APP_QSOMGR_{field}_SOURCE")).upper()
                 record_sources = self._text(record.get("APP_QSOMGR_SOURCES")).upper()
 
-                # A value supplied by LoTW, agreed by QRZ+LoTW, explicitly
-                # corrected/inferred by LoTW, or held for review is final.
-                # Historical evidence may only improve a QRZ-only value.
+                # Values supplied by LoTW, agreed by QRZ+LoTW, explicitly
+                # corrected/inferred by LoTW, or held for review are final.
+                # Only a QRZ-derived zone may be normalized by historical/
+                # geographic LoTW evidence.
                 if source not in {"QRZ", ""}:
                     continue
                 if source == "" and record_sources != "QRZ":
                     continue
 
                 candidate = call_values.get(field)
-                if not candidate or candidate == current:
+                winner = "lotw_history"
+                target_source = "LOTW_HISTORY"
+                if candidate:
+                    scope = call_scope
+                    reason = (
+                        f"{field} normalizado por {scope} com pelo menos duas confirmações LoTW unânimes."
+                    )
+                    metric = f"{field.lower()}_normalized_by_same_call_lotw_history"
+                else:
+                    candidate = geo_values.get(field)
+                    if not candidate:
+                        continue
+                    scope = geo_scope
+                    winner = "lotw_geo_consensus"
+                    target_source = "LOTW_GEO_CONSENSUS"
+                    threshold = "duas" if scope.endswith("grid6") else "cinco"
+                    reason = (
+                        f"{field} normalizado por {scope} no mesmo DXCC com pelo menos {threshold} "
+                        "confirmações LoTW unânimes; somente valor derivado do QRZ pode ser alterado."
+                    )
+                    metric = f"{field.lower()}_normalized_by_lotw_geo_consensus"
+
+                if candidate == current:
                     continue
 
                 conflicts.append(self._conflict(
-                    record, {}, field, current, candidate, candidate, "lotw_history",
-                    f"{field} normalizado por {history_scope} com pelo menos duas confirmações LoTW unânimes.",
-                    severity="warning",
+                    record, {}, field, current, candidate, candidate, winner,
+                    reason, severity="warning",
                 ))
                 record[field] = candidate
-                record[f"APP_QSOMGR_{field}_SOURCE"] = "LOTW_HISTORY"
-                self._sanitization[f"{field.lower()}_normalized_by_same_call_lotw_history"] += 1
+                record[f"APP_QSOMGR_{field}_SOURCE"] = target_source
+                self._sanitization[metric] += 1
 
     @staticmethod
     def _lotw_confirmed(record: Dict[str, Any]) -> bool:
