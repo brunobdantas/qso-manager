@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.0.4] - 2026-09-27
+
+### Award Master Safe V3
+
+- impede que histórico LoTW sobrescreva um valor em que QRZ e LoTW já concordam;
+- remove completamente a normalização cruzada por DXCC + grid entre indicativos diferentes;
+- restringe correções históricas a mesmo indicativo + mesmo DXCC + mesmo grid, com pelo menos duas confirmações LoTW unânimes;
+- usa grid de 6 caracteres quando disponível; registros com grid de 6 caracteres não fazem fallback para consenso de 4 caracteres;
+- trata zonas numericamente equivalentes como iguais (ex.: 5 = 05, 7 = 07);
+- registra explicitamente a origem de CQZ/ITUZ no Master para bloquear reprocessamentos indevidos;
+- preserva correções por sinalizadores nativos do LoTW e a limpeza de IOTA da v1.0.3;
+- adiciona regressões baseadas nos casos W3GLH, K8FER e KF5SFJ observados na auditoria real.
+
 ## [1.0.3] - 2026-09-27
 
 ### Award Master Safe V2
