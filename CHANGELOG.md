@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.0.5] - 2026-09-27
+
+### Award Master Safe V4
+
+- preserva integralmente CQZ/ITUZ quando QRZ e LoTW concordam;
+- mantém as correções nativas do LoTW e o histórico do mesmo indicativo;
+- reintroduz consenso geográfico entre indicativos somente para zonas cuja origem ainda é exclusivamente QRZ;
+- exige mesmo DXCC e mesmo grid;
+- grid6 exige pelo menos 2 confirmações LoTW unânimes;
+- grid4 exige pelo menos 5 confirmações LoTW unânimes;
+- o consenso geográfico nunca pode alterar valores marcados como CONSENSUS, LOTW, QRZ_REVIEW, LOTW_INFERRED ou LOTW_CORRECTED;
+- registra a correção como LOTW_GEO_CONSENSUS na auditoria e no ADIF;
+- adiciona regressões para os casos reais detectados na validação da v1.0.4.
+
 ## [1.0.4] - 2026-09-27
 
 ### Award Master Safe V3
