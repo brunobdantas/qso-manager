@@ -75,12 +75,18 @@ class AwardMasterService:
         for index in sorted(qrz_unmatched):
             record = dict(qrz_records[index])
             record["APP_QSOMGR_SOURCES"] = "QRZ"
+            for field in ZONE_FIELDS:
+                if not self._empty(record.get(field)):
+                    record[f"APP_QSOMGR_{field}_SOURCE"] = "QRZ"
             merged.append(record)
             field_sources["QRZ"] += len(record)
 
         for index in sorted(lotw_unmatched):
             record = self._normalize_lotw_confirmation(dict(lotw_records[index]))
             record["APP_QSOMGR_SOURCES"] = "LOTW"
+            for field in ZONE_FIELDS:
+                if not self._empty(record.get(field)):
+                    record[f"APP_QSOMGR_{field}_SOURCE"] = "LOTW"
             merged.append(record)
             field_sources["LOTW"] += len(record)
 
@@ -117,6 +123,9 @@ class AwardMasterService:
                 "lotw_explicit_invalid_flags_are_authoritative": True,
                 "unexplained_source_conflicts_are_audited": True,
                 "invalid_iota_placeholders_are_omitted": True,
+                "source_consensus_is_never_overridden_by_history": True,
+                "history_normalization_requires_same_call_dxcc_and_grid": True,
+                "cross_callsign_dxcc_grid_consensus_disabled": True,
             },
             "sources": {
                 "QRZ": {
@@ -398,8 +407,7 @@ class AwardMasterService:
             if chosen_zone:
                 result[field] = chosen_zone
                 source_counts["LOTW" if zone_winner.startswith("lotw") else "QRZ"] += 1
-                if zone_winner not in {"consensus", "qrz", "lotw"}:
-                    result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
+                result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
             else:
                 result.pop(field, None)
                 result[f"APP_QSOMGR_{field}_SOURCE"] = zone_winner.upper()
@@ -525,11 +533,11 @@ class AwardMasterService:
     def _choose_zone(
         self, field: str, qrz: Dict[str, Any], lotw: Dict[str, Any]
     ) -> Tuple[str, str, str]:
-        qv = self._text(qrz.get(field)).upper()
-        lv = self._text(lotw.get(field)).upper()
+        qv = self._zone_value(qrz.get(field))
+        lv = self._zone_value(lotw.get(field))
         invalid_field = f"APP_LOTW_{field}_INVALID"
         inferred_field = f"APP_LOTW_{field}_INFERRED"
-        invalid = self._text(lotw.get(invalid_field)).upper()
+        invalid = self._zone_value(lotw.get(invalid_field))
         inferred = self._text(lotw.get(inferred_field)).upper() == "Y"
 
         if invalid and qv and qv == invalid:
@@ -570,9 +578,12 @@ class AwardMasterService:
     def _build_lotw_location_consensus(
         self, records: Sequence[Dict[str, Any]]
     ) -> Dict[str, Dict[Tuple[str, ...], Dict[str, str]]]:
+        # Historical normalization is deliberately restricted to the SAME
+        # callsign, DXCC and grid. Different stations in the same DXCC/grid
+        # are never used to correct one another.
         buckets: Dict[str, Dict[Tuple[str, ...], Dict[str, List[str]]]] = {
-            "call_grid": defaultdict(lambda: defaultdict(list)),
-            "dxcc_grid": defaultdict(lambda: defaultdict(list)),
+            "call_grid4": defaultdict(lambda: defaultdict(list)),
+            "call_grid6": defaultdict(lambda: defaultdict(list)),
         }
         for record in records:
             if not self._lotw_confirmed(record):
@@ -580,21 +591,22 @@ class AwardMasterService:
             grid = self._text(record.get("GRIDSQUARE")).upper()
             dxcc = self._text(record.get("DXCC"))
             call = self._text(record.get("CALL")).upper()
-            if len(grid) < 4 or not dxcc:
+            if len(grid) < 4 or not dxcc or not call:
                 continue
-            grid4 = grid[:4]
+            keys = [("call_grid4", (call, dxcc, grid[:4]))]
+            if len(grid) >= 6:
+                keys.append(("call_grid6", (call, dxcc, grid[:6])))
             for field in ZONE_FIELDS:
-                value = self._text(record.get(field)).upper()
-                invalid = self._text(record.get(f"APP_LOTW_{field}_INVALID")).upper()
+                value = self._zone_value(record.get(field))
+                invalid = self._zone_value(record.get(f"APP_LOTW_{field}_INVALID"))
                 if not value or value == invalid:
                     continue
-                if call:
-                    buckets["call_grid"][(call, dxcc, grid4)][field].append(value)
-                buckets["dxcc_grid"][(dxcc, grid4)][field].append(value)
+                for kind, key in keys:
+                    buckets[kind][key][field].append(value)
 
         result: Dict[str, Dict[Tuple[str, ...], Dict[str, str]]] = {
-            "call_grid": {},
-            "dxcc_grid": {},
+            "call_grid4": {},
+            "call_grid6": {},
         }
         for kind, groups in buckets.items():
             for key, fields in groups.items():
@@ -606,10 +618,8 @@ class AwardMasterService:
                     ranked = sorted(counts.items(), key=lambda item: (-item[1], item[0]))
                     value, count = ranked[0]
                     total = len(values)
-                    if kind == "call_grid":
-                        if total >= 2 and count == total:
-                            accepted[field] = value
-                    elif total >= 2 and count >= 2 and (count / total) >= 0.80:
+                    # At least two confirmed observations and unanimity.
+                    if total >= 2 and count == total:
                         accepted[field] = value
                 if accepted:
                     result[kind][key] = accepted
@@ -625,30 +635,41 @@ class AwardMasterService:
             grid = self._text(record.get("GRIDSQUARE")).upper()
             dxcc = self._text(record.get("DXCC"))
             call = self._text(record.get("CALL")).upper()
-            if len(grid) < 4 or not dxcc:
+            if len(grid) < 4 or not dxcc or not call:
                 continue
-            call_values = consensus.get("call_grid", {}).get((call, dxcc, grid[:4]), {})
-            dxcc_values = consensus.get("dxcc_grid", {}).get((dxcc, grid[:4]), {})
+
+            if len(grid) >= 6:
+                call_values = consensus.get("call_grid6", {}).get((call, dxcc, grid[:6]), {})
+                history_scope = "same-call/DXCC/grid6"
+            else:
+                call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
+                history_scope = "same-call/DXCC/grid4"
+
             for field in ZONE_FIELDS:
-                if self._text(record.get(f"APP_LOTW_{field}_INFERRED")).upper() == "Y":
+                current = self._zone_value(record.get(field))
+                source = self._text(record.get(f"APP_QSOMGR_{field}_SOURCE")).upper()
+                record_sources = self._text(record.get("APP_QSOMGR_SOURCES")).upper()
+
+                # A value supplied by LoTW, agreed by QRZ+LoTW, explicitly
+                # corrected/inferred by LoTW, or held for review is final.
+                # Historical evidence may only improve a QRZ-only value.
+                if source not in {"QRZ", ""}:
                     continue
-                if self._text(record.get(f"APP_QSOMGR_{field}_SOURCE")).upper() in {
-                    "QRZ_REVIEW", "LOTW_CORRECTED", "LOTW_INFERRED", "LOTW_INVALID"
-                }:
+                if source == "" and record_sources != "QRZ":
                     continue
-                candidate = call_values.get(field) or dxcc_values.get(field)
-                current = self._text(record.get(field)).upper()
-                if not candidate or not current or candidate == current:
+
+                candidate = call_values.get(field)
+                if not candidate or candidate == current:
                     continue
-                source = "same-call LoTW history" if call_values.get(field) else "DXCC/grid LoTW consensus"
+
                 conflicts.append(self._conflict(
                     record, {}, field, current, candidate, candidate, "lotw_history",
-                    f"{field} normalizado por {source} confirmado, sem consulta ao UltimateAAC.",
+                    f"{field} normalizado por {history_scope} com pelo menos duas confirmações LoTW unânimes.",
                     severity="warning",
                 ))
                 record[field] = candidate
                 record[f"APP_QSOMGR_{field}_SOURCE"] = "LOTW_HISTORY"
-                self._sanitization[f"{field.lower()}_normalized_by_lotw_history"] += 1
+                self._sanitization[f"{field.lower()}_normalized_by_same_call_lotw_history"] += 1
 
     @staticmethod
     def _lotw_confirmed(record: Dict[str, Any]) -> bool:
@@ -846,14 +867,23 @@ class AwardMasterService:
             return sub
         return mode
 
-    @staticmethod
-    def _equivalent(field: str, a: Any, b: Any) -> bool:
+    @classmethod
+    def _equivalent(cls, field: str, a: Any, b: Any) -> bool:
         if field == "FREQ":
             try:
                 return abs(float(a) - float(b)) <= 0.0005
             except (TypeError, ValueError):
                 pass
+        if field in ZONE_FIELDS:
+            return cls._zone_value(a) == cls._zone_value(b)
         return str(a).strip().upper() == str(b).strip().upper()
+
+    @staticmethod
+    def _zone_value(value: Any) -> str:
+        text = "" if value is None else str(value).strip().upper()
+        if text.isdigit():
+            return str(int(text))
+        return text
 
     @staticmethod
     def _empty(value: Any) -> bool:
