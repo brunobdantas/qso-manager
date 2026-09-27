@@ -221,3 +221,133 @@ def test_snapshot_master_rejects_legacy_confirmation_only_lotw(tmp_path):
 
     with pytest.raises(AwardMasterError, match="somente QSLs"):
         AwardMasterService().build_from_snapshots(store)
+
+def test_iota_placeholders_are_omitted_from_master_and_metrics():
+    qrz = adif(adif_record(
+        CALL="PY2ABC", QSO_DATE="20260927", TIME_ON="120000", BAND="10M",
+        MODE="FT8", IOTA="NONE",
+    ))
+    lotw = adif(adif_record(
+        CALL="PY2ABC", QSO_DATE="20260927", TIME_ON="120000", BAND="10M",
+        MODE="FT8",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<IOTA:" not in result["content"]
+    assert result["report"]["coverage"]["master"]["iota"] == 0
+    assert result["report"]["data_quality"]["iota_placeholder_removed"] == 1
+
+
+def test_lotw_explicit_invalid_grid_removes_bad_qrz_grid_without_guessing():
+    qrz = adif(adif_record(
+        CALL="KQ4YWT", QSO_DATE="20260927", TIME_ON="121000", BAND="10M",
+        MODE="FT8", DXCC="6", STATE="AK", CQZ="1", GRIDSQUARE="FM06",
+    ))
+    lotw = adif(adif_record(
+        CALL="KQ4YWT", QSO_DATE="20260927", TIME_ON="121000", BAND="10M",
+        MODE="FT8", DXCC="6", STATE="AK", CQZ="1", QSL_RCVD="Y",
+        APP_LOTW_GRIDSQUARE_INVALID="FM06",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<GRIDSQUARE:" not in result["content"]
+    assert result["report"]["data_quality"]["lotw_explicit_invalid_grid_removed"] == 1
+    assert any(
+        item["field"] == "GRIDSQUARE" and item["winner"] == "lotw_invalid"
+        for item in result["report"]["conflicts"]["items"]
+    )
+
+
+def test_lotw_native_invalid_zone_flag_allows_explicit_correction():
+    qrz = adif(adif_record(
+        CALL="DO9SAM", QSO_DATE="20260528", TIME_ON="174000", BAND="15M",
+        MODE="FT8", DXCC="230", GRIDSQUARE="JO61", CQZ="34",
+    ))
+    lotw = adif(adif_record(
+        CALL="DO9SAM", QSO_DATE="20260528", TIME_ON="174000", BAND="15M",
+        MODE="FT8", DXCC="230", GRIDSQUARE="JO61", CQZ="14", QSL_RCVD="Y",
+        APP_LOTW_CQZ_INVALID="34", APP_LOTW_CQZ_INFERRED="Y",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:2>14" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:14>LOTW_CORRECTED" in result["content"]
+    assert result["report"]["data_quality"]["lotw_explicit_invalid_cqz"] == 1
+
+
+def test_unexplained_zone_conflict_at_same_location_preserves_qrz_and_audits():
+    qrz = adif(adif_record(
+        CALL="IT9LCC", QSO_DATE="20260927", TIME_ON="122000", BAND="12M",
+        MODE="FT8", DXCC="248", GRIDSQUARE="JM78SF", CQZ="15", ITUZ="28",
+    ))
+    lotw = adif(adif_record(
+        CALL="IT9LCC", QSO_DATE="20260927", TIME_ON="122000", BAND="12M",
+        MODE="FT8", DXCC="248", GRIDSQUARE="JM78SF", CQZ="33", ITUZ="37",
+        QSL_RCVD="Y",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<CQZ:2>15" in result["content"]
+    assert "<ITUZ:2>28" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:10>QRZ_REVIEW" in result["content"]
+    assert any(
+        item["field"] == "CQZ" and item["winner"] == "qrz_review"
+        for item in result["report"]["conflicts"]["items"]
+    )
+
+
+def test_confirmed_lotw_history_can_normalize_qrz_only_zone_with_two_observations():
+    qrz = adif(
+        adif_record(
+            CALL="DL1XYZ", QSO_DATE="20260920", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="14", ITUZ="28",
+        ),
+        adif_record(
+            CALL="DL1XYZ", QSO_DATE="20260921", TIME_ON="100000", BAND="12M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61BB", CQZ="14", ITUZ="28",
+        ),
+        adif_record(
+            CALL="DL1XYZ", QSO_DATE="20260922", TIME_ON="100000", BAND="15M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61CC", CQZ="34", ITUZ="14",
+        ),
+    )
+    lotw = adif(
+        adif_record(
+            CALL="DL1XYZ", QSO_DATE="20260920", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="14", ITUZ="28",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="DL1XYZ", QSO_DATE="20260921", TIME_ON="100000", BAND="12M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61BB", CQZ="14", ITUZ="28",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert result["content"].count("<CQZ:2>14") == 3
+    assert result["content"].count("<ITUZ:2>28") == 3
+    assert result["report"]["data_quality"]["cqz_normalized_by_lotw_history"] == 1
+    assert result["report"]["data_quality"]["ituz_normalized_by_lotw_history"] == 1
+
+
+def test_qrz_only_plausible_grid_is_never_removed_without_source_native_evidence():
+    qrz = adif(adif_record(
+        CALL="K2IDA", QSO_DATE="20260927", TIME_ON="123000", BAND="15M",
+        MODE="FT8", DXCC="202", COUNTRY="Puerto Rico", GRIDSQUARE="FK68KJ", CQZ="8",
+    ))
+    lotw = adif(adif_record(
+        CALL="K2IDA", QSO_DATE="20260927", TIME_ON="123000", BAND="15M",
+        MODE="FT8",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<GRIDSQUARE:6>FK68KJ" in result["content"]
+    assert "<CQZ:1>8" in result["content"]
+
