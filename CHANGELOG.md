@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.6] - 2026-09-28
+
+### Award Master Safe V5
+
+- impede qualquer fallback de grid8 para grid6/grid4 e de grid6 para grid4 durante normalização geográfica;
+- aplica consenso LoTW somente na mesma precisão Maidenhead do QSO;
+- reconhece grids Maidenhead válidos de 4, 6 e 8 caracteres;
+- reduz grids malformados somente ao maior prefixo válido já presente na fonte, sem inventar caracteres;
+- remove grids sem qualquer prefixo Maidenhead válido;
+- registra toda sanitização de grid na auditoria CSV e nas métricas de qualidade;
+- adiciona regressões para o caso real EA4HPY/IN70X e para preservação de grids8 válidos.
+
 ## [1.0.5] - 2026-09-27
 
 ### Award Master Safe V4
