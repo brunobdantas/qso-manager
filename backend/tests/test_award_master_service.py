@@ -506,3 +506,93 @@ def test_grid6_geo_consensus_requires_only_two_unanimous_confirmations_for_qrz_d
     assert "<ITUZ:2>14" in result["content"]
     assert "<APP_QSOMGR_CQZ_SOURCE:18>LOTW_GEO_CONSENSUS" in result["content"]
 
+def test_grid6_never_falls_back_to_grid4_geo_consensus():
+    qrz = adif(adif_record(
+        CALL="EA4HPY", QSO_DATE="20260301", TIME_ON="120000", BAND="10M",
+        MODE="FT8", DXCC="281", GRIDSQUARE="IN70AA", CQZ="99", ITUZ="99",
+    ))
+    lotw_rows = []
+    for i, (call, grid) in enumerate((
+        ("EA4A", "IN70BB"), ("EA4B", "IN70CC"), ("EA4C", "IN70DD"),
+        ("EA4D", "IN70EE"), ("EA4E", "IN70FF"),
+    )):
+        lotw_rows.append(adif_record(
+            CALL=call, QSO_DATE=f"20260{1+i}02", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="281", GRIDSQUARE=grid, CQZ="14", ITUZ="37",
+            QSL_RCVD="Y",
+        ))
+
+    result = AwardMasterService().build(qrz, adif(*lotw_rows))
+
+    assert "<GRIDSQUARE:6>IN70AA" in result["content"]
+    assert "<CQZ:2>99" in result["content"]
+    assert "<ITUZ:2>99" in result["content"]
+    assert result["report"]["data_quality"].get("cqz_normalized_by_lotw_geo_consensus", 0) == 0
+    assert result["report"]["data_quality"].get("ituz_normalized_by_lotw_geo_consensus", 0) == 0
+
+
+def test_grid8_never_falls_back_to_grid6_or_grid4_consensus():
+    qrz = adif(adif_record(
+        CALL="F1TIM", QSO_DATE="20260321", TIME_ON="175800", BAND="10M",
+        MODE="FT8", DXCC="227", GRIDSQUARE="JN35AV60", CQZ="99", ITUZ="99",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="F1AAA", QSO_DATE="20260101", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="227", GRIDSQUARE="JN35AV61", CQZ="14", ITUZ="27",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="F1BBB", QSO_DATE="20260102", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="227", GRIDSQUARE="JN35AV62", CQZ="14", ITUZ="27",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<GRIDSQUARE:8>JN35AV60" in result["content"]
+    assert "<CQZ:2>99" in result["content"]
+    assert "<ITUZ:2>99" in result["content"]
+
+
+def test_malformed_grid_is_reduced_to_longest_valid_prefix_and_audited():
+    qrz = adif(adif_record(
+        CALL="EA4HPY", QSO_DATE="20260301", TIME_ON="120000", BAND="10M",
+        MODE="FT8", DXCC="281", GRIDSQUARE="IN70X", CQZ="14", ITUZ="37",
+    ))
+    lotw = adif(adif_record(
+        CALL="EA4HPY", QSO_DATE="20260301", TIME_ON="120000", BAND="10M",
+        MODE="FT8", DXCC="281", CQZ="14", ITUZ="37", QSL_RCVD="Y",
+    ))
+
+    service = AwardMasterService()
+    result = service.build(qrz, lotw)
+    audit = service.audit_csv(result)
+
+    assert "<GRIDSQUARE:4>IN70" in result["content"]
+    assert "IN70X" not in result["content"]
+    assert result["report"]["data_quality"]["malformed_grid_reduced_to_valid_prefix"] == 1
+    assert "EA4HPY" in audit
+    assert "IN70X" in audit
+    assert "IN70" in audit
+    assert "maior prefixo válido" in audit
+
+
+def test_valid_eight_character_maidenhead_grid_is_preserved():
+    qrz = adif(adif_record(
+        CALL="F1TIM", QSO_DATE="20260321", TIME_ON="175800", BAND="10M",
+        MODE="FT8", DXCC="227", GRIDSQUARE="JN35AV60", CQZ="14", ITUZ="27",
+    ))
+    lotw = adif(adif_record(
+        CALL="F1TIM", QSO_DATE="20260321", TIME_ON="175800", BAND="10M",
+        MODE="FT8", DXCC="227", GRIDSQUARE="JN35AV60", CQZ="14", ITUZ="27",
+        QSL_RCVD="Y",
+    ))
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<GRIDSQUARE:8>JN35AV60" in result["content"]
+    assert result["report"]["data_quality"].get("malformed_grid_reduced_to_valid_prefix", 0) == 0
+    assert result["report"]["data_quality"].get("malformed_grid_removed", 0) == 0
+

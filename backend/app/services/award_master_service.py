@@ -33,7 +33,11 @@ IDENTITY_FIELDS = ("CALL", "QSO_DATE", "TIME_ON", "BAND", "MODE", "SUBMODE", "FR
 LOTW_AUTHORITY_FIELDS = ("STATE", "CNTY", "DXCC", "COUNTRY", "PFX", "CONT")
 ZONE_FIELDS = ("CQZ", "ITUZ")
 INVALID_IOTA_VALUES = {"NONE", "BLANK", "- NONE", "-NONE", "N/A", "NA", "UNKNOWN", "NULL", "-"}
-GRID_RE = re.compile(r"^[A-R]{2}[0-9]{2}(?:[A-X]{2})?$", re.IGNORECASE)
+GRID_PATTERNS = {
+    4: re.compile(r"^[A-R]{2}[0-9]{2}$", re.IGNORECASE),
+    6: re.compile(r"^[A-R]{2}[0-9]{2}[A-X]{2}$", re.IGNORECASE),
+    8: re.compile(r"^[A-R]{2}[0-9]{2}[A-X]{2}[0-9]{2}$", re.IGNORECASE),
+}
 
 
 @dataclass(frozen=True)
@@ -54,13 +58,14 @@ class AwardMasterService:
 
     def build(self, qrz_content: str, lotw_content: str) -> Dict[str, Any]:
         self._sanitization = defaultdict(int)
+        self._source_sanitization_conflicts: List[Dict[str, Any]] = []
         qrz_records, qrz_errors = self._parse(qrz_content, "QRZ")
         lotw_records, lotw_errors = self._parse(lotw_content, "LoTW")
         lotw_consensus = self._build_lotw_location_consensus(lotw_records)
         pairs, qrz_unmatched, lotw_unmatched, ambiguous = self._match(qrz_records, lotw_records)
 
         merged: List[Dict[str, Any]] = []
-        conflicts: List[Dict[str, Any]] = []
+        conflicts: List[Dict[str, Any]] = list(self._source_sanitization_conflicts)
         field_sources = defaultdict(int)
 
         for pair in pairs:
@@ -127,7 +132,10 @@ class AwardMasterService:
                 "history_normalization_requires_same_call_dxcc_and_grid": True,
                 "cross_callsign_dxcc_grid_consensus_only_for_qrz_derived_zones": True,
                 "cross_callsign_grid6_requires_two_unanimous_lotw": True,
+                "cross_callsign_grid8_requires_two_unanimous_lotw": True,
                 "cross_callsign_grid4_requires_five_unanimous_lotw": True,
+                "precise_grid_never_falls_back_to_coarser_consensus": True,
+                "malformed_grid_is_reduced_only_to_longest_valid_prefix": True,
             },
             "sources": {
                 "QRZ": {
@@ -285,12 +293,12 @@ class AwardMasterService:
         if not text.strip():
             raise AwardMasterError(f"O arquivo {label} está vazio")
         records, errors = ADIFParser().parse(text)
-        records = [self._clean_record(record) for record in records if record and record.get("CALL")]
+        records = [self._clean_record(record, label) for record in records if record and record.get("CALL")]
         if not records:
             raise AwardMasterError(f"Nenhum QSO válido foi encontrado no arquivo {label}")
         return records, errors
 
-    def _clean_record(self, record: Dict[str, Any]) -> Dict[str, Any]:
+    def _clean_record(self, record: Dict[str, Any], label: str = "") -> Dict[str, Any]:
         cleaned: Dict[str, Any] = {}
         for key, value in record.items():
             if value is None:
@@ -302,8 +310,55 @@ class AwardMasterService:
             if name == "IOTA" and self._text(normalized).upper() in INVALID_IOTA_VALUES:
                 self._sanitization["iota_placeholder_removed"] += 1
                 continue
+            if name == "GRIDSQUARE":
+                original = self._text(normalized).upper()
+                repaired = self._sanitize_grid(original)
+                if repaired != original:
+                    if repaired:
+                        self._sanitization["malformed_grid_reduced_to_valid_prefix"] += 1
+                        reason = (
+                            f"Grid Maidenhead malformado em {label}; preservado somente o maior prefixo válido "
+                            f"({original} -> {repaired})."
+                        )
+                    else:
+                        self._sanitization["malformed_grid_removed"] += 1
+                        reason = (
+                            f"Grid Maidenhead malformado em {label}; nenhum prefixo válido de 4/6/8 caracteres "
+                            "foi encontrado e o campo foi omitido."
+                        )
+                    self._source_sanitization_conflicts.append({
+                        "call": self._text(record.get("CALL")),
+                        "date": self._text(record.get("QSO_DATE")),
+                        "band": self._text(record.get("BAND")),
+                        "mode": self._canonical_mode(record),
+                        "field": "GRIDSQUARE",
+                        "qrz": original if label.upper() == "QRZ" else "",
+                        "lotw": original if label.upper() == "LOTW" else "",
+                        "resolution": repaired,
+                        "winner": "sanitizer",
+                        "severity": "warning",
+                        "reason": reason,
+                    })
+                if not repaired:
+                    continue
+                normalized = repaired
             cleaned[name] = normalized
         return cleaned
+
+    @staticmethod
+    def _sanitize_grid(value: Any) -> str:
+        grid = str(value or "").strip().upper()
+        if not grid:
+            return ""
+        pattern = GRID_PATTERNS.get(len(grid))
+        if pattern and pattern.fullmatch(grid):
+            return grid
+        # Safe repair: never invent characters. Keep only the longest complete,
+        # syntactically valid Maidenhead prefix already present in the source.
+        for length in (8, 6, 4):
+            if len(grid) > length and GRID_PATTERNS[length].fullmatch(grid[:length]):
+                return grid[:length]
+        return ""
 
     def _match(
         self, qrz_records: Sequence[Dict[str, Any]], lotw_records: Sequence[Dict[str, Any]]
@@ -589,8 +644,10 @@ class AwardMasterService:
         buckets: Dict[str, Dict[Tuple[str, ...], Dict[str, List[str]]]] = {
             "call_grid4": defaultdict(lambda: defaultdict(list)),
             "call_grid6": defaultdict(lambda: defaultdict(list)),
+            "call_grid8": defaultdict(lambda: defaultdict(list)),
             "dxcc_grid4": defaultdict(lambda: defaultdict(list)),
             "dxcc_grid6": defaultdict(lambda: defaultdict(list)),
+            "dxcc_grid8": defaultdict(lambda: defaultdict(list)),
         }
         for record in records:
             if not self._lotw_confirmed(record):
@@ -608,6 +665,10 @@ class AwardMasterService:
                 keys.append(("dxcc_grid6", (dxcc, grid[:6])))
                 if call:
                     keys.append(("call_grid6", (call, dxcc, grid[:6])))
+            if len(grid) >= 8:
+                keys.append(("dxcc_grid8", (dxcc, grid[:8])))
+                if call:
+                    keys.append(("call_grid8", (call, dxcc, grid[:8])))
 
             for field in ZONE_FIELDS:
                 value = self._zone_value(record.get(field))
@@ -620,8 +681,10 @@ class AwardMasterService:
         result: Dict[str, Dict[Tuple[str, ...], Dict[str, str]]] = {
             "call_grid4": {},
             "call_grid6": {},
+            "call_grid8": {},
             "dxcc_grid4": {},
             "dxcc_grid6": {},
+            "dxcc_grid8": {},
         }
         for kind, groups in buckets.items():
             minimum = 5 if kind == "dxcc_grid4" else 2
@@ -655,22 +718,33 @@ class AwardMasterService:
 
             call_values: Dict[str, str] = {}
             call_scope = ""
-            if call and len(grid) >= 6:
-                call_values = consensus.get("call_grid6", {}).get((call, dxcc, grid[:6]), {})
-                if call_values:
-                    call_scope = "same-call/DXCC/grid6"
-            if call and not call_values:
-                call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
-                if call_values:
-                    call_scope = "same-call/DXCC/grid4"
-
             geo_values: Dict[str, str] = {}
             geo_scope = ""
-            if len(grid) >= 6:
+
+            # Never fall back from a precise locator to a coarser geographic
+            # consensus. A grid8 record may use only grid8 evidence; grid6 may
+            # use only grid6; grid4 may use only grid4.
+            if len(grid) >= 8:
+                if call:
+                    call_values = consensus.get("call_grid8", {}).get((call, dxcc, grid[:8]), {})
+                    if call_values:
+                        call_scope = "same-call/DXCC/grid8"
+                geo_values = consensus.get("dxcc_grid8", {}).get((dxcc, grid[:8]), {})
+                if geo_values:
+                    geo_scope = "DXCC/grid8"
+            elif len(grid) >= 6:
+                if call:
+                    call_values = consensus.get("call_grid6", {}).get((call, dxcc, grid[:6]), {})
+                    if call_values:
+                        call_scope = "same-call/DXCC/grid6"
                 geo_values = consensus.get("dxcc_grid6", {}).get((dxcc, grid[:6]), {})
                 if geo_values:
                     geo_scope = "DXCC/grid6"
-            if not geo_values:
+            else:
+                if call:
+                    call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
+                    if call_values:
+                        call_scope = "same-call/DXCC/grid4"
                 geo_values = consensus.get("dxcc_grid4", {}).get((dxcc, grid[:4]), {})
                 if geo_values:
                     geo_scope = "DXCC/grid4"
