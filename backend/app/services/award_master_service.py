@@ -801,7 +801,7 @@ class AwardMasterService:
                     scope = geo_scope
                     winner = "lotw_geo_consensus"
                     target_source = "LOTW_GEO_CONSENSUS"
-                    threshold = "duas" if scope.endswith("grid6") else "cinco"
+                    threshold = "duas" if scope.endswith(("grid6", "grid8")) else "cinco"
                     reason = (
                         f"{field} normalizado por {scope} no mesmo DXCC com pelo menos {threshold} "
                         "confirmações LoTW unânimes; somente valor derivado do QRZ pode ser alterado."
