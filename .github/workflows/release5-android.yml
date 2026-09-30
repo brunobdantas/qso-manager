@@ -98,7 +98,7 @@ jobs:
           sha256sum "$OUTPUT"
 
       - name: Upload Android APK
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: PU2BRU-QSO-Manager-Android
           path: dist-android/PU2BRU-QSO-Manager-v${{ env.MOBILE_VERSION }}-Android-preview.apk
