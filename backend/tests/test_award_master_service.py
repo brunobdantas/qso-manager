@@ -596,3 +596,122 @@ def test_valid_eight_character_maidenhead_grid_is_preserved():
     assert result["report"]["data_quality"].get("malformed_grid_reduced_to_valid_prefix", 0) == 0
     assert result["report"]["data_quality"].get("malformed_grid_removed", 0) == 0
 
+def test_same_call_grid4_history_may_correct_precise_qrz_only_zone():
+    qrz = adif(adif_record(
+        CALL="DO9SAM", QSO_DATE="20260528", TIME_ON="174000", BAND="15M",
+        MODE="FT8", DXCC="230", GRIDSQUARE="JO61GI", CQZ="34", ITUZ="14",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="DO9SAM", QSO_DATE="20260110", TIME_ON="100000", BAND="10M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61AA", CQZ="14", ITUZ="28",
+            QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="DO9SAM", QSO_DATE="20260210", TIME_ON="100000", BAND="12M",
+            MODE="FT8", DXCC="230", GRIDSQUARE="JO61BB", CQZ="14", ITUZ="28",
+            QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert "<GRIDSQUARE:6>JO61GI" in result["content"]
+    assert "<CQZ:2>14" in result["content"]
+    assert "<ITUZ:2>28" in result["content"]
+    assert "<APP_QSOMGR_CQZ_SOURCE:12>LOTW_HISTORY" in result["content"]
+    assert result["report"]["data_quality"]["cqz_normalized_by_same_call_lotw_history"] == 1
+    assert result["report"]["data_quality"]["ituz_normalized_by_same_call_lotw_history"] == 1
+
+
+def test_lotw_only_near_duplicate_collapses_into_unique_reconciled_qso():
+    qrz = adif(adif_record(
+        CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+        MODE="FT8", FREQ="28.0740", DXCC="291", GRIDSQUARE="FN31", CQZ="5", ITUZ="8",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", GRIDSQUARE="FN31",
+            CQZ="5", ITUZ="8", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120130", BAND="10M",
+            MODE="FT8", FREQ="28.0741", DXCC="291", GRIDSQUARE="FN31",
+            CQZ="5", ITUZ="8", QSL_RCVD="Y",
+        ),
+    )
+
+    service = AwardMasterService()
+    result = service.build(qrz, lotw)
+    audit = service.audit_csv(result)
+
+    assert result["report"]["merge"]["master_records"] == 1
+    assert result["report"]["merge"]["lotw_only"] == 0
+    assert result["report"]["merge"]["lotw_near_duplicates_collapsed"] == 1
+    assert result["report"]["data_quality"]["lotw_only_near_duplicate_collapsed"] == 1
+    assert "<APP_QSOMGR_LOTW_DUP_COLLAPSED:1>Y" in result["content"]
+    assert "QSO_DUPLICATE" in audit
+    assert "COLLAPSED_INTO_RECONCILED_QSO" in audit
+
+
+def test_lotw_only_near_duplicate_is_preserved_when_reverse_match_is_not_unique():
+    qrz = adif(adif_record(
+        CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+        MODE="FT8", FREQ="28.0740", DXCC="291",
+    ))
+    lotw = adif(
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120030", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120040", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert result["report"]["merge"]["master_records"] == 3
+    assert result["report"]["merge"]["lotw_only"] == 2
+    assert result["report"]["merge"]["lotw_near_duplicates_collapsed"] == 0
+    assert result["report"]["data_quality"].get("lotw_only_near_duplicate_collapsed", 0) == 0
+
+
+def test_lotw_only_near_duplicate_is_preserved_when_it_has_two_reconciled_candidates():
+    qrz = adif(
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120200", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291",
+        ),
+    )
+    lotw = adif(
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120000", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120200", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+        adif_record(
+            CALL="W1ABC", QSO_DATE="20260930", TIME_ON="120100", BAND="10M",
+            MODE="FT8", FREQ="28.0740", DXCC="291", QSL_RCVD="Y",
+        ),
+    )
+
+    result = AwardMasterService().build(qrz, lotw)
+
+    assert result["report"]["merge"]["master_records"] == 3
+    assert result["report"]["merge"]["lotw_only"] == 1
+    assert result["report"]["merge"]["lotw_near_duplicates_collapsed"] == 0
+
