@@ -86,12 +86,19 @@ class AwardMasterService:
             merged.append(record)
             field_sources["QRZ"] += len(record)
 
+        lotw_only_records: List[Dict[str, Any]] = []
         for index in sorted(lotw_unmatched):
             record = self._normalize_lotw_confirmation(dict(lotw_records[index]))
             record["APP_QSOMGR_SOURCES"] = "LOTW"
             for field in ZONE_FIELDS:
                 if not self._empty(record.get(field)):
                     record[f"APP_QSOMGR_{field}_SOURCE"] = "LOTW"
+            lotw_only_records.append(record)
+
+        lotw_only_records, collapsed_lotw_near_duplicates = self._collapse_lotw_only_near_duplicates(
+            merged, lotw_only_records, conflicts
+        )
+        for record in lotw_only_records:
             merged.append(record)
             field_sources["LOTW"] += len(record)
 
@@ -136,6 +143,8 @@ class AwardMasterService:
                 "cross_callsign_grid4_requires_five_unanimous_lotw": True,
                 "precise_grid_never_falls_back_to_coarser_consensus": True,
                 "malformed_grid_is_reduced_only_to_longest_valid_prefix": True,
+                "same_call_grid4_history_may_normalize_precise_grid_zone": True,
+                "lotw_only_near_duplicate_requires_unique_reciprocal_match": True,
             },
             "sources": {
                 "QRZ": {
@@ -154,7 +163,8 @@ class AwardMasterService:
                 "exact_pairs": sum(1 for p in pairs if p.kind == "EXACT"),
                 "near_time_pairs": sum(1 for p in pairs if p.kind == "NEAR_TIME"),
                 "qrz_only": len(qrz_unmatched),
-                "lotw_only": len(lotw_unmatched),
+                "lotw_only": len(lotw_only_records),
+                "lotw_near_duplicates_collapsed": collapsed_lotw_near_duplicates,
                 "ambiguous_groups": len(ambiguous),
                 "master_records": len(merged),
                 "field_sources": dict(field_sources),
@@ -729,6 +739,14 @@ class AwardMasterService:
                     call_values = consensus.get("call_grid8", {}).get((call, dxcc, grid[:8]), {})
                     if call_values:
                         call_scope = "same-call/DXCC/grid8"
+                    else:
+                        # Same station + same DXCC may safely use its own
+                        # confirmed grid4 history when the precise suffix
+                        # changed over time. Cross-callsign evidence never
+                        # receives this fallback.
+                        call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
+                        if call_values:
+                            call_scope = "same-call/DXCC/grid4-for-precise-grid"
                 geo_values = consensus.get("dxcc_grid8", {}).get((dxcc, grid[:8]), {})
                 if geo_values:
                     geo_scope = "DXCC/grid8"
@@ -737,6 +755,10 @@ class AwardMasterService:
                     call_values = consensus.get("call_grid6", {}).get((call, dxcc, grid[:6]), {})
                     if call_values:
                         call_scope = "same-call/DXCC/grid6"
+                    else:
+                        call_values = consensus.get("call_grid4", {}).get((call, dxcc, grid[:4]), {})
+                        if call_values:
+                            call_scope = "same-call/DXCC/grid4-for-precise-grid"
                 geo_values = consensus.get("dxcc_grid6", {}).get((dxcc, grid[:6]), {})
                 if geo_values:
                     geo_scope = "DXCC/grid6"
@@ -779,7 +801,7 @@ class AwardMasterService:
                     scope = geo_scope
                     winner = "lotw_geo_consensus"
                     target_source = "LOTW_GEO_CONSENSUS"
-                    threshold = "duas" if scope.endswith("grid6") else "cinco"
+                    threshold = "duas" if scope.endswith(("grid6", "grid8")) else "cinco"
                     reason = (
                         f"{field} normalizado por {scope} no mesmo DXCC com pelo menos {threshold} "
                         "confirmações LoTW unânimes; somente valor derivado do QRZ pode ser alterado."
@@ -796,6 +818,84 @@ class AwardMasterService:
                 record[field] = candidate
                 record[f"APP_QSOMGR_{field}_SOURCE"] = target_source
                 self._sanitization[metric] += 1
+
+    def _collapse_lotw_only_near_duplicates(
+        self,
+        merged: List[Dict[str, Any]],
+        lotw_only_records: List[Dict[str, Any]],
+        conflicts: List[Dict[str, Any]],
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        if not lotw_only_records:
+            return lotw_only_records, 0
+
+        candidate_indexes = [
+            i for i, record in enumerate(merged)
+            if self._text(record.get("APP_QSOMGR_SOURCES")).upper() == "QRZ,LOTW"
+        ]
+        edges: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+        reverse: Dict[int, List[Tuple[int, int]]] = defaultdict(list)
+
+        for li, lotw in enumerate(lotw_only_records):
+            for mi in candidate_indexes:
+                target = merged[mi]
+                if self._group_key(lotw) != self._group_key(target):
+                    continue
+                delta = self._time_delta(lotw, target)
+                if delta is None or delta > self.MATCH_WINDOW_SECONDS:
+                    continue
+                if not self._frequency_compatible(lotw, target):
+                    continue
+                edges[li].append((mi, delta))
+                reverse[mi].append((li, delta))
+
+        collapsed: set[int] = set()
+        for li, options in edges.items():
+            if len(options) != 1:
+                continue
+            mi, delta = options[0]
+            if len(reverse.get(mi, [])) != 1:
+                continue
+
+            lotw = lotw_only_records[li]
+            target = merged[mi]
+
+            # Preserve the already reconciled QSO as the canonical identity.
+            # The duplicate LoTW row may enrich only fields that are empty.
+            for field, value in lotw.items():
+                if field in IDENTITY_FIELDS or field.startswith("APP_QSOMGR_"):
+                    continue
+                if self._empty(target.get(field)) and not self._empty(value):
+                    target[field] = value
+
+            self._normalize_lotw_confirmation(target, lotw)
+            target["APP_QSOMGR_LOTW_DUP_COLLAPSED"] = "Y"
+            target["APP_QSOMGR_LOTW_DUP_DELTA_SEC"] = str(delta)
+
+            conflicts.append({
+                "call": self._text(target.get("CALL")),
+                "date": self._text(target.get("QSO_DATE")),
+                "band": self._text(target.get("BAND")),
+                "mode": self._canonical_mode(target),
+                "field": "QSO_DUPLICATE",
+                "qrz": self._text(target.get("TIME_ON")),
+                "lotw": self._text(lotw.get("TIME_ON")),
+                "resolution": "COLLAPSED_INTO_RECONCILED_QSO",
+                "winner": "existing_qrz_lotw",
+                "severity": "warning",
+                "reason": (
+                    "Registro somente-LoTW colapsado no QSO QRZ+LoTW já reconciliado: "
+                    "mesmo indicativo/data/banda/modo, frequência compatível e pareamento "
+                    "único e recíproco dentro de 120 segundos."
+                ),
+            })
+            collapsed.add(li)
+            self._sanitization["lotw_only_near_duplicate_collapsed"] += 1
+
+        retained = [
+            record for i, record in enumerate(lotw_only_records)
+            if i not in collapsed
+        ]
+        return retained, len(collapsed)
 
     @staticmethod
     def _lotw_confirmed(record: Dict[str, Any]) -> bool:

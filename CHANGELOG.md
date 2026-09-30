@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.0.7] - 2026-09-30
+
+### Award Master Safe V6
+
+- permite histórico CQZ/ITUZ do mesmo indicativo + mesmo DXCC + grid4 corrigir um QSO com grid6/8 quando faltam confirmações na precisão exata;
+- mantém proibido qualquer fallback geográfico entre indicativos diferentes para uma precisão de grid mais grosseira;
+- adiciona segunda passagem de deduplicação para registros somente-LoTW próximos de um QSO QRZ+LoTW já reconciliado;
+- colapsa o registro somente quando o pareamento é único e recíproco dentro de 120 segundos, com mesma chamada/data/banda/modo e frequência compatível;
+- preserva registros separados quando houver mais de um candidato de qualquer lado;
+- registra cada colapso no ADIF, nas métricas e na auditoria CSV;
+- adiciona regressões para DO9SAM/JO61 e para cenários de deduplicação 1:1 e ambígua.
+
 ## [1.0.6] - 2026-09-28
 
 ### Award Master Safe V5
