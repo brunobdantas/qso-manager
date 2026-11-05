@@ -387,7 +387,7 @@ class V8OnlineService:
         result["ready"] = True
         return result
 
-    def issues(self, limit: int = 100) -> Dict[str, Any]:
+    def issues(self, limit: int = 100, qsl_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         rows, _ = self._workspace()._cached()
         configured_logs = {
             p for p in self.LOG_PROVIDERS
@@ -436,7 +436,7 @@ class V8OnlineService:
                     "message": "Duplicidade provável",
                     "sources": row.get("providers", []),
                 })
-        qsl = self.qsl_analysis()
+        qsl = qsl_result if qsl_result is not None else self.qsl_analysis()
         for proposal in qsl.get("proposals") or []:
             q = proposal.get("qso") or {}
             issues.append({

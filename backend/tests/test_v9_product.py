@@ -73,3 +73,20 @@ def test_bootstrap_and_diagnostics_do_not_expose_secret_values(tmp_path: Path):
     assert diagnostic["windows_production_ready"] is True
     assert diagnostic["android_stage"] == "preview"
     assert "super-secret-key" not in str(diagnostic)
+
+
+def test_bootstrap_reuses_single_qsl_analysis(tmp_path: Path, monkeypatch):
+    s = service(tmp_path)
+    calls = []
+    original = s.qsl_analysis
+
+    def counted_qsl():
+        calls.append(True)
+        return original()
+
+    monkeypatch.setattr(s, "qsl_analysis", counted_qsl)
+    boot = s.bootstrap()
+    assert len(calls) == 1
+    assert boot["dashboard"]["qsl_summary"] == boot["qsl"]["summary"]
+    assert boot["dashboard"]["issues"]["total"] == boot["issues"]["total"]
+    assert boot["dashboard"]["issues"]["items"] == boot["issues"]["items"][:20]

@@ -162,14 +162,28 @@ class V9ProductService(V8OnlineService):
         return self._eqsl_qrz_service().apply(confirm=confirm, limit=limit)
 
     def bootstrap(self) -> Dict[str, Any]:
+        # Compute the expensive QSL correlation once. Previously dashboard(),
+        # issues() and bootstrap() each recalculated it (four analyses total).
         status = self.status()
+        workspace = self._workspace().options()
+        qsl = self.qsl_analysis()
+        issues = self.issues(limit=50, qsl_result=qsl)
+        # Keep dashboard's response shape, but reuse startup results.
+        dashboard_issues = {**issues, "items": issues["items"][:20]}
+        dashboard = {
+            "version": self.VERSION,
+            "summary": workspace.get("summary") or {},
+            "issues": dashboard_issues,
+            "qsl_summary": qsl.get("summary") or {},
+            "sources": status["providers"],
+        }
         return {
             "version": self.VERSION,
             "status": status,
-            "dashboard": self.dashboard(),
-            "workspace": self._workspace().options(),
-            "qsl": self.qsl_analysis(),
-            "issues": self.issues(limit=50),
+            "dashboard": dashboard,
+            "workspace": workspace,
+            "qsl": qsl,
+            "issues": issues,
         }
 
     def diagnostics(self) -> Dict[str, Any]:

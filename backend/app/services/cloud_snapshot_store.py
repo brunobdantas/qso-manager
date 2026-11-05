@@ -13,6 +13,7 @@ class CloudSnapshotStore:
     def __init__(self, root: Path | None = None) -> None:
         self.root = Path(root or user_data_root()) / "cloud_snapshots"
         self.root.mkdir(parents=True, exist_ok=True)
+        self._summary_cache: Dict[str, tuple[tuple[int, int] | None, Dict[str, Any]]] = {}
 
     def _path(self, provider: str) -> Path:
         return self.root / f"{provider.lower()}.json"
@@ -29,6 +30,7 @@ class CloudSnapshotStore:
         temp = path.with_suffix(".tmp")
         temp.write_text(json.dumps(payload, ensure_ascii=False, default=str), encoding="utf-8")
         temp.replace(path)
+        self._summary_cache.pop(provider.upper(), None)
         return self.summary(provider)
 
     def load(self, provider: str) -> Dict[str, Any]:
@@ -38,13 +40,27 @@ class CloudSnapshotStore:
         return json.loads(path.read_text(encoding="utf-8"))
 
     def summary(self, provider: str) -> Dict[str, Any]:
+        # A snapshot can contain tens of thousands of QSOs. Avoid parsing the
+        # whole JSON every time a page asks only for record count/timestamp.
+        provider = provider.upper()
+        path = self._path(provider)
+        try:
+            stat = path.stat()
+            signature = (stat.st_mtime_ns, stat.st_size)
+        except FileNotFoundError:
+            signature = None
+        cached = self._summary_cache.get(provider)
+        if cached is not None and cached[0] == signature:
+            return dict(cached[1])
         payload = self.load(provider)
-        return {
-            "provider": provider.upper(),
+        result = {
+            "provider": provider,
             "downloaded_at": payload.get("downloaded_at"),
             "records": len(payload.get("records") or []),
             "metadata": payload.get("metadata") or {},
         }
+        self._summary_cache[provider] = (signature, result)
+        return dict(result)
 
     def all_summaries(self, providers: Iterable[str]) -> List[Dict[str, Any]]:
         return [self.summary(provider) for provider in providers]
@@ -62,6 +78,7 @@ class CloudSnapshotStore:
         existed = path.exists()
         if existed:
             path.unlink()
+        self._summary_cache.pop(provider, None)
         return {
             "provider": provider,
             "cleared": existed,
