@@ -106,3 +106,39 @@ def test_activity_store_persists_recent_events(tmp_path):
     assert len(rows) == 2
     assert rows[0]["kind"] == "BULK_COMPLETE"
     assert rows[1]["kind"] == "EXPORT"
+
+
+def test_export_adif_large_selection_indexes_rows_once(tmp_path, monkeypatch):
+    ws = workspace(tmp_path)
+    rows = [
+        {
+            "logical_id": f"logical-{index}",
+            "canonical_record": {
+                "CALL": f"T{index:04d}ST",
+                "QSO_DATE": "2026-11-04",
+                "TIME_ON": "12:00:00",
+                "BAND": "15M",
+                "MODE": "FT8",
+            },
+        }
+        for index in range(1500)
+    ]
+    calls = []
+    def cached_once():
+        calls.append(True)
+        return rows, {}
+
+    monkeypatch.setattr(ws, "_cached", cached_once)
+    selected = [f"logical-{index}" for index in reversed(range(1500))]
+    adif = ws.export_adif(selected)
+    assert len(calls) == 1
+    assert adif.count("<EOR>") == len(selected)
+    assert adif.index("T1499ST") < adif.index("T0000ST")
+
+
+def test_export_adif_rejects_missing_logical_id(tmp_path, monkeypatch):
+    ws = workspace(tmp_path)
+    monkeypatch.setattr(ws, "_cached", lambda: ([], {}))
+    import pytest
+    with pytest.raises(LookupError, match="Logical QSO not found"):
+        ws.export_adif(["missing"])
