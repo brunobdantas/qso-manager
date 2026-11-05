@@ -461,7 +461,21 @@ class QSOManagerWorkspace:
         return dict(self._raw(logical_id)["canonical_record"])
 
     def export_adif(self, logical_ids: Sequence[str]) -> str:
-        records = [self.canonical_record(logical_id) for logical_id in logical_ids]
+        # Resolve all selected QSOs against a single snapshot. Calling
+        # canonical_record() in a loop scans every consolidated row for
+        # every selected ID, leading to quadratic export times.
+        rows, _ = self._cached()
+        selected = set(logical_ids)
+        records_by_id = {
+            row["logical_id"]: row["canonical_record"]
+            for row in rows
+            if row["logical_id"] in selected
+        }
+        records = []
+        for logical_id in logical_ids:
+            if logical_id not in records_by_id:
+                raise LookupError("Logical QSO not found in current snapshots")
+            records.append(dict(records_by_id[logical_id]))
         return records_to_adif(records, program_id="PU2BRU-QSO-Manager-6")
 
     def plan_bulk(
