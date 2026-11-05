@@ -142,3 +142,25 @@ def test_export_adif_rejects_missing_logical_id(tmp_path, monkeypatch):
     import pytest
     with pytest.raises(LookupError, match="Logical QSO not found"):
         ws.export_adif(["missing"])
+
+
+def test_lookup_and_bulk_plan_use_cached_id_index(tmp_path, monkeypatch):
+    ws = workspace(tmp_path)
+    ws.hub.snapshots.save("QRZ", [
+        {"CALL": f"T{i:04d}ST", "QSO_DATE": "2026-11-04",
+         "TIME_ON": f"12:{i // 60:02d}:{i % 60:02d}", "BAND": "15M", "MODE": "FT8"}
+        for i in range(120)
+    ], {"coverage": "API_FULL_SYNC"})
+    QSOManagerWorkspace.invalidate_cache()
+    ids = ws.ids()["ids"]
+    assert len(ids) == 120
+    expected = ws.get(ids[0])
+    assert ws._raw(ids[0])["logical_id"] == ids[0]
+    assert ws.get(ids[0]) == expected
+    plan = ws.plan_bulk("PUBLISH", ids, target="EQSL")
+    assert plan["selected"] == 120
+    assert plan["actionable"] == 120
+    assert len(ws._cache_by_id) == 120
+    QSOManagerWorkspace.invalidate_cache()
+    assert ws._cache_by_id == {}
+    assert ws.get(ids[0])["logical_id"] == ids[0]
