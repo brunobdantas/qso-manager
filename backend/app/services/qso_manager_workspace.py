@@ -33,6 +33,7 @@ class QSOManagerWorkspace:
     _cache_lock = threading.RLock()
     _cache_signature: Optional[Tuple[Any, ...]] = None
     _cache_rows: List[Dict[str, Any]] = []
+    _cache_by_id: Dict[str, Dict[str, Any]] = {}
     _cache_options: Dict[str, Any] = {}
 
     def __init__(self, hub: Optional[CloudHubService] = None) -> None:
@@ -85,6 +86,7 @@ class QSOManagerWorkspace:
         with cls._cache_lock:
             cls._cache_signature = None
             cls._cache_rows = []
+            cls._cache_by_id = {}
             cls._cache_options = {}
 
     def _source_payload(self, provider: str, index: int, record: Dict[str, Any]) -> Dict[str, Any]:
@@ -293,14 +295,16 @@ class QSOManagerWorkspace:
     def _cached(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         signature = self._signature()
         with self._cache_lock:
-            if self._cache_signature == signature and self._cache_rows:
+            if self._cache_signature == signature:
                 return self._cache_rows, self._cache_options
-        rows, options = self._build_rows()
-        with self._cache_lock:
+            # Only one request should build the workspace on a cold startup.
+            # The former unlocked build allowed simultaneous full reconciliations.
+            rows, options = self._build_rows()
             self.__class__._cache_signature = signature
             self.__class__._cache_rows = rows
+            self.__class__._cache_by_id = {row["logical_id"]: row for row in rows}
             self.__class__._cache_options = options
-        return rows, options
+            return rows, options
 
     def options(self) -> Dict[str, Any]:
         rows, options = self._cached()
@@ -426,18 +430,14 @@ class QSOManagerWorkspace:
         return {"ids": ids, "total": len(rows), "truncated": len(rows) > len(ids)}
 
     def get(self, logical_id: str) -> Dict[str, Any]:
-        rows, _ = self._cached()
-        for row in rows:
-            if row["logical_id"] == logical_id:
-                return self._public_row(row, include_records=True)
-        raise LookupError("Logical QSO not found in current snapshots")
+        return self._public_row(self._raw(logical_id), include_records=True)
 
     def _raw(self, logical_id: str) -> Dict[str, Any]:
-        rows, _ = self._cached()
-        for row in rows:
-            if row["logical_id"] == logical_id:
-                return row
-        raise LookupError("Logical QSO not found in current snapshots")
+        self._cached()
+        try:
+            return self._cache_by_id[logical_id]
+        except KeyError:
+            raise LookupError("Logical QSO not found in current snapshots") from None
 
     @staticmethod
     def _public_row(row: Dict[str, Any], include_records: bool = False) -> Dict[str, Any]:
