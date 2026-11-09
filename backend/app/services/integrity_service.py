@@ -187,17 +187,31 @@ class IntegrityStore:
             ]
 
 
-    def record_correction(self, job_id: str, logical_id: str, provider: str,
-                          action: str, status: str, detail: Optional[dict] = None) -> None:
-        # Persist outcome and provenance, never credentials or raw API bodies.
-        safe_detail = {str(k): str(v)[:600] for k, v in (detail or {}).items()}
+    def record_corrections(self, events: list[dict]) -> None:
+        if not events:
+            return
+        values = []
+        for event in events:
+            safe_detail = {str(k): str(v)[:600] for k, v in (event.get("detail") or {}).items()}
+            values.append((
+                str(event["job_id"]), str(event["logical_id"]),
+                str(event["provider"]).upper(), str(event["action"]).upper(),
+                str(event["status"]).upper(),
+                json.dumps(safe_detail, ensure_ascii=False), _now(),
+            ))
         with _LOCK, self._connect() as db:
-            db.execute(
+            db.executemany(
                 "INSERT INTO corrections(job_id,logical_id,provider,action,status,detail,created_at) VALUES(?,?,?,?,?,?,?)",
-                (job_id, logical_id, provider.upper(), action.upper(),
-                 status.upper(), json.dumps(safe_detail, ensure_ascii=False), _now()),
+                values,
             )
             db.commit()
+
+    def record_correction(self, job_id: str, logical_id: str, provider: str,
+                          action: str, status: str, detail: Optional[dict] = None) -> None:
+        self.record_corrections([{
+            "job_id": job_id, "logical_id": logical_id, "provider": provider,
+            "action": action, "status": status, "detail": detail or {},
+        }])
 
     def corrections(self, limit: int = 100) -> list[dict]:
         with self._connect() as db:
