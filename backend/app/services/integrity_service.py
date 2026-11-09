@@ -129,6 +129,10 @@ class IntegrityStore:
             rows = db.execute("SELECT * FROM decisions ORDER BY id DESC LIMIT ?", (min(max(1, limit), 1000),)).fetchall()
         return [dict(row) for row in rows]
 
+    def errors_revision(self) -> str:
+        with self._connect() as db:
+            return str(db.execute("SELECT COALESCE(MAX(updated_at),'') FROM provider_errors").fetchone()[0])
+
     def revision(self) -> int:
         with self._connect() as db:
             return int(db.execute("SELECT COALESCE(MAX(id),0) FROM decisions").fetchone()[0])
@@ -377,11 +381,11 @@ class IntegrityService:
         key = str(self.store.path.resolve())
         with self._cache_guard:
             cached = self._analysis_cache.get(key)
-            if cached is not None and cached[0] == (signature, self.store.revision()):
+            if cached is not None and cached[0] == (signature, self.store.revision(), self.store.errors_revision()):
                 return cached[1]
             analysis = self._analyze()
             self.store.scan(signature, analysis["summary"])
-            self._analysis_cache[key] = ((signature, self.store.revision()), analysis)
+            self._analysis_cache[key] = ((signature, self.store.revision(), self.store.errors_revision()), analysis)
             return analysis
 
     def report(self, page: int = 1, page_size: int = 50, provider: str = "",
@@ -436,10 +440,10 @@ class IntegrityService:
             matches, _, _, _ = comparator._match(normalized, external)
             for ref, candidate, _ in matches:
                 record = candidate.raw
-                if provider == "EQSL_INBOX" or any(
-                    _normalize(record.get(key)) in ("Y", "V", "YES", "CONFIRMED")
-                    for key in ("LOTW_QSL_RCVD", "QSL_RCVD")
-                ):
+                checked = ("LOTW_QSL_RCVD", "QSL_RCVD") if provider == "LOTW" else (
+                    "EQSL_QSL_RCVD", "APP_EQSL_CONFIRMED", "QSL_RCVD")
+                if any(_normalize(record.get(key)) in ("Y", "V", "YES", "CONFIRMED")
+                       for key in checked):
                     matched_by[ref.index].add(provider)
         confirmed_entities = set()
         confirmed_combos = set()
