@@ -29,9 +29,9 @@ def test_legacy_snapshot_is_upgraded_to_small_summary(tmp_path):
     }), encoding="utf-8")
     store = CloudSnapshotStore(root=tmp_path)
     assert store.summary("WRL")["records"] == 1
-    assert (tmp_path / "wrl.summary.json").exists()
+    assert (tmp_path / "cloud_snapshots" / "wrl.summary.json").exists()
     store.clear("WRL")
-    assert not (tmp_path / "wrl.summary.json").exists()
+    assert not (tmp_path / "cloud_snapshots" / "wrl.summary.json").exists()
 
 
 def test_wrl_full_sync_reports_cursor_page_progress():
