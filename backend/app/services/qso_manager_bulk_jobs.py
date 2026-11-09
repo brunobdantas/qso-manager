@@ -265,9 +265,14 @@ class QSOManagerBulkJobManager:
                     if hub.credentials.configured(provider):
                         try:
                             hub.sync(provider)
+                            IntegrityStore().provider_result(provider, None)
                         except Exception as exc:
                             errors.append({"provider": provider, "error": f"re-sync: {exc}"})
                             failed += 1
+                            try:
+                                IntegrityStore().provider_result(provider, "Re-sync failed: " + str(exc))
+                            except Exception:
+                                pass
                 QSOManagerWorkspace.invalidate_cache()
 
             status = "succeeded" if failed == 0 else "completed_with_errors"
