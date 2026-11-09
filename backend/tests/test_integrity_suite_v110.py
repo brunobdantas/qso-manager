@@ -192,3 +192,35 @@ def test_integrity_case_keys_do_not_depend_on_provider_snapshot_indexes(tmp_path
     QSOManagerWorkspace.invalidate_cache()
     after = {c["call"]: c["case_key"] for c in engine.report()["items"]}
     assert before == after
+
+
+def test_near_simultaneous_ft8_and_ft4_are_never_coalesced(tmp_path):
+    # Two legitimate digital QSOs, even on an identical frequency and second,
+    # must remain separate records rather than being misclassified as duplicates.
+    engine = _engine(
+        tmp_path,
+        [_qso("K1AAA", "12:00:00", mode="FT8")],
+        wrl=[_qso("K1AAA", "12:00:00", mode="FT4")],
+    )
+    report = engine.report(page_size=50)
+    m = report["summary"]["providers"]["WRL"]
+    assert m["matched"] == 0
+    assert m["missing"] == 1
+    assert m["extra"] == 1
+    assert m["duplicates"] == 0
+    assert engine.reconcile_plan("WRL")["selected"] == 1
+
+
+def test_correction_audit_persists_each_record_in_one_transaction(tmp_path):
+    store = IntegrityStore(root=tmp_path)
+    store.record_corrections([
+        {"job_id": "job1", "logical_id": "row1", "provider": "WRL",
+         "action": "PUBLISH", "status": "API_ACCEPTED", "detail": {"verification": "pending"}},
+        {"job_id": "job1", "logical_id": "row2", "provider": "WRL",
+         "action": "PUBLISH", "status": "ERROR", "detail": {"type": "RATE_LIMIT"}},
+    ])
+    reopened = IntegrityStore(root=tmp_path).corrections()
+    assert len(reopened) == 2
+    assert reopened[0]["logical_id"] == "row2"
+    assert reopened[0]["status"] == "ERROR"
+    assert reopened[1]["status"] == "API_ACCEPTED"
