@@ -24,6 +24,7 @@ from .api import (
     advanced,
     v8_online,
     product,
+    integrity,
 )
 
 Base.metadata.create_all(bind=engine)
@@ -56,6 +57,15 @@ app.include_router(qso_manager.router)
 app.include_router(advanced.router)
 app.include_router(v8_online.router)
 app.include_router(product.router)
+app.include_router(integrity.router)
+
+# The monitor is opt-in and never performs a remote write.
+from .services.integrity_monitor import IntegrityMonitor
+
+@app.on_event("startup")
+def start_integrity_monitor():
+    IntegrityMonitor.start()
+
 
 FRONTEND_DIST = frontend_dist_dir()
 ASSETS_DIR = FRONTEND_DIST / "assets"
