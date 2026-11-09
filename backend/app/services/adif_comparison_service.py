@@ -203,6 +203,13 @@ class ADIFComparisonService:
             freq_diff = abs(a.freq_hz - b.freq_hz)
 
         mode_ok = self._mode_compatible(a, b)
+        # Distinct digital modes are distinct QSOs even at identical UTC time
+        # and frequency. Only mode-label synonyms (e.g. MFSK/SUBMODE=FT4)
+        # may be paired through the normalized operating_mode.
+        digital = {"FT8", "FT4", "JT65", "JT9", "RTTY", "PSK31", "JS8", "WSPR"}
+        if (not mode_ok and a.operating_mode and b.operating_mode and
+                (a.operating_mode in digital or b.operating_mode in digital)):
+            return None
         tolerance = self._freq_tolerance(a, b)
         freq_ok = freq_diff is None or freq_diff <= tolerance
 
