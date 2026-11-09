@@ -147,6 +147,8 @@ class QSOManagerBulkJobManager:
                         else:
                             src, src_index = workspace.canonical_ref(logical_id, preferred_source=source)
                             result = hub.publish(src, src_index, target, confirm=True)
+                            if result.get("ok") is not True:
+                                raise RuntimeError("Remote insert was not confirmed")
                             modified_providers.add(target)
                     elif action == "UPDATE":
                         if not target or target not in refs:
@@ -154,6 +156,8 @@ class QSOManagerBulkJobManager:
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target not present"}
                         else:
                             result = hub.update_remote(target, int(refs[target]), changes, confirm=True)
+                            if result.get("ok") is not True:
+                                raise RuntimeError("Remote update was not confirmed")
                             modified_providers.add(target)
                     elif action == "DELETE":
                         if not target or target not in refs:
@@ -161,6 +165,8 @@ class QSOManagerBulkJobManager:
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target not present"}
                         else:
                             result = hub.delete_remote(target, int(refs[target]), confirm=True)
+                            if result.get("ok") is not True:
+                                raise RuntimeError("Remote deletion was not confirmed")
                             modified_providers.add(target)
                     elif action == "MOVE":
                         if not source or not target or source not in refs or target in refs:
@@ -168,16 +174,22 @@ class QSOManagerBulkJobManager:
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "route not applicable"}
                         else:
                             publish_result = hub.publish(source, int(refs[source]), target, confirm=True)
+                            if publish_result.get("ok") is not True:
+                                raise RuntimeError("Move target did not confirm creation; source preserved")
                             modified_providers.add(target)
                             delete_result = None
                             if delete_source:
                                 delete_result = hub.delete_remote(source, int(refs[source]), confirm=True)
+                                if delete_result.get("ok") is not True:
+                                    raise RuntimeError("Move source deletion failed")
                                 modified_providers.add(source)
                             result = {"ok": True, "publish": publish_result, "delete": delete_result}
                     else:
                         raise ValueError(f"Unsupported bulk action {action}")
 
                     if actionable:
+                        if result.get("ok") is False:
+                            raise RuntimeError("Remote provider rejected the operation")
                         succeeded += 1
                     results.append({"logical_id": logical_id, "result": result})
                 except Exception as exc:
@@ -208,7 +220,7 @@ class QSOManagerBulkJobManager:
                             failed += 1
                 QSOManagerWorkspace.invalidate_cache()
 
-            status = "succeeded"
+            status = "succeeded" if failed == 0 else "completed_with_errors"
             summary = f"{succeeded} concluído(s), {failed} erro(s)."
             cls._set(
                 job_id,
