@@ -179,7 +179,7 @@ class V8OnlineService:
                 cls._provider_sync_locks[provider] = lock
             return lock
 
-    def sync(self, provider: str) -> Dict[str, Any]:
+    def sync(self, provider: str, progress=None) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
         if provider == "HRDLOG":
             raise CloudProviderError("HRDLog uses ADIF bootstrap + realtime inserts; it has no supported full-log read sync")
@@ -190,6 +190,8 @@ class V8OnlineService:
                 if provider == "LOTW" and hasattr(adapter, "fetch_incremental"):
                     previous = self.snapshots.load("LOTW")
                     result = adapter.fetch_incremental(previous)
+                elif provider == "WRL" and progress is not None:
+                    result = adapter.fetch_all(progress_callback=progress)
                 else:
                     result = adapter.fetch_all()
             metadata = dict(result.get("metadata") or {})
