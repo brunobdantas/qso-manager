@@ -69,6 +69,9 @@ class ParallelSyncCoordinator:
                     "started_at": None,
                     "finished_at": _now() if not configured else None,
                     "duration_ms": 0 if not configured else None,
+                    "pages": 0,
+                    "loaded_records": 0,
+                    "elapsed_seconds": 0,
                 }
                 providers[provider] = item
                 if configured:
@@ -152,6 +155,13 @@ class ParallelSyncCoordinator:
             if self._active_job_id == job_id:
                 self._active_job_id = None
 
+    def _update_progress(self, job_id: str, provider: str, pages: int, records: int, elapsed: float) -> None:
+        with self._lock:
+            item = self._jobs[job_id]["providers"][provider]
+            item["pages"] = pages
+            item["loaded_records"] = records
+            item["elapsed_seconds"] = elapsed
+
     def _sync_one(self, job_id: str, provider: str) -> Dict[str, Any]:
         start = time.monotonic()
         with self._lock:
@@ -160,7 +170,11 @@ class ParallelSyncCoordinator:
             item["started_at"] = _now()
 
         try:
-            result = self.service_factory().sync(provider)
+            service = self.service_factory()
+            if provider == "WRL" and isinstance(service, V9ProductService):
+                result = service.sync(provider, progress=lambda pages, records, elapsed: self._update_progress(job_id, provider, pages, records, elapsed))
+            else:
+                result = service.sync(provider)
             return {
                 "provider": provider,
                 "ok": True,
