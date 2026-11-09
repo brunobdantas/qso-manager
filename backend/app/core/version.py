@@ -1,5 +1,5 @@
 """Canonical application version and product metadata."""
 
 APP_NAME = "PU2BRU QSO Manager"
-__version__ = "1.0.9"
+__version__ = "1.1.0"
 PRODUCT_STAGE = "production"
