@@ -116,7 +116,8 @@ def apply(request: AssistedApplyRequest):
         if plan["actionable"] != len(selected):
             raise ValueError("A prévia do provedor não permite incluir todos os QSOs selecionados")
         job = QSOManagerBulkJobManager.start(
-            action="PUBLISH", logical_ids=selected, target=target, source="QRZ"
+            action="PUBLISH", logical_ids=selected, target=target, source="QRZ",
+            expected_signature=request.signature
         )
         QSOManagerActivityStore().append(
             "ASSISTED_RECONCILIATION",
