@@ -63,6 +63,7 @@ class QSOManagerBulkJobManager:
         source: Optional[str] = None,
         changes: Optional[Dict[str, Any]] = None,
         delete_source: bool = False,
+        expected_signature: Optional[str] = None,
     ) -> Dict[str, Any]:
         workspace = QSOManagerWorkspace()
         plan = workspace.plan_bulk(
@@ -79,6 +80,7 @@ class QSOManagerBulkJobManager:
             "target": plan.get("target"),
             "source": plan.get("source"),
             "delete_source": bool(plan.get("delete_source")),
+            "expected_signature": expected_signature,
             "changes": plan.get("changes") or {},
             "selected": plan["selected"],
             "actionable": plan["actionable"],
@@ -133,9 +135,16 @@ class QSOManagerBulkJobManager:
             source = job.get("source")
             delete_source = bool(job.get("delete_source"))
             changes = dict(job.get("changes") or {})
+            expected_signature = job.get("expected_signature")
+            if expected_signature:
+                from .integrity_service import IntegrityService
+                if IntegrityService(workspace=workspace).signature() != expected_signature:
+                    raise RuntimeError("Os snapshots mudaram desde a aprovação do plano; correção cancelada")
             total = max(1, int(job.get("actionable") or 1))
 
             for logical_id in logical_ids:
+                if expected_signature and IntegrityService(workspace=workspace).signature() != expected_signature:
+                    raise RuntimeError("Snapshot alterado durante a execução; interrompidas novas inclusões")
                 try:
                     row = workspace._raw(logical_id)
                     refs = row["refs"]
