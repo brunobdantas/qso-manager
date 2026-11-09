@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .cloud_hub_fast_service import CloudHubService
 from .qso_manager_activity import QSOManagerActivityStore
 from .qso_manager_workspace import QSOManagerWorkspace
+from .integrity_service import IntegrityStore, _failure_type
 
 
 class QSOManagerBulkJobManager:
@@ -46,7 +47,7 @@ class QSOManagerBulkJobManager:
                 return
             finished = [
                 (job_id, job) for job_id, job in cls._jobs.items()
-                if job.get("status") in {"succeeded", "failed"}
+                if job.get("status") in {"succeeded", "failed", "completed_with_errors"}
             ]
             finished.sort(key=lambda pair: pair[1].get("completed_at") or pair[1].get("created_at") or "")
             for job_id, _ in finished[: max(0, len(cls._jobs) - cls._max_history)]:
@@ -62,6 +63,7 @@ class QSOManagerBulkJobManager:
         source: Optional[str] = None,
         changes: Optional[Dict[str, Any]] = None,
         delete_source: bool = False,
+        expected_signature: Optional[str] = None,
     ) -> Dict[str, Any]:
         workspace = QSOManagerWorkspace()
         plan = workspace.plan_bulk(
@@ -78,6 +80,7 @@ class QSOManagerBulkJobManager:
             "target": plan.get("target"),
             "source": plan.get("source"),
             "delete_source": bool(plan.get("delete_source")),
+            "expected_signature": expected_signature,
             "changes": plan.get("changes") or {},
             "selected": plan["selected"],
             "actionable": plan["actionable"],
@@ -119,8 +122,18 @@ class QSOManagerBulkJobManager:
         )
         modified_providers = set()
         processed = succeeded = failed = 0
+        circuit_open = set()
         errors: List[Dict[str, Any]] = []
         results: List[Dict[str, Any]] = []
+        audit_pending: List[Dict[str, Any]] = []
+
+        def flush_audit() -> None:
+            if audit_pending:
+                try:
+                    IntegrityStore().record_corrections(audit_pending)
+                    audit_pending.clear()
+                except Exception:
+                    pass
 
         try:
             hub = CloudHubService()
@@ -131,16 +144,32 @@ class QSOManagerBulkJobManager:
             source = job.get("source")
             delete_source = bool(job.get("delete_source"))
             changes = dict(job.get("changes") or {})
+            expected_signature = job.get("expected_signature")
+            if expected_signature:
+                from .integrity_service import IntegrityService
+                if IntegrityService(workspace=workspace).signature() != expected_signature:
+                    raise RuntimeError("Os snapshots mudaram desde a aprovação do plano; correção cancelada")
             total = max(1, int(job.get("actionable") or 1))
 
             for logical_id in logical_ids:
+                if expected_signature and IntegrityService(workspace=workspace).signature() != expected_signature:
+                    raise RuntimeError("Snapshot alterado durante a execução; interrompidas novas inclusões")
                 try:
                     row = workspace._raw(logical_id)
                     refs = row["refs"]
                     result: Dict[str, Any]
                     actionable = True
-
-                    if action == "PUBLISH":
+                    fresh = workspace.plan_bulk(action, [logical_id], target=target,
+                                                source=source, changes=changes,
+                                                delete_source=delete_source)
+                    reason = fresh["sample"][0]["status"]
+                    if target in circuit_open:
+                        actionable = False
+                        result = {"logical_id": logical_id, "status": "skipped", "reason": "provider_circuit_open"}
+                    elif fresh["actionable"] != 1:
+                        actionable = False
+                        result = {"logical_id": logical_id, "status": "skipped", "reason": reason}
+                    elif action == "PUBLISH":
                         if not target or target in refs:
                             actionable = False
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target already present"}
@@ -192,11 +221,31 @@ class QSOManagerBulkJobManager:
                             raise RuntimeError("Remote provider rejected the operation")
                         succeeded += 1
                     results.append({"logical_id": logical_id, "result": result})
+                    audit_pending.append({
+                        "job_id": job_id, "logical_id": logical_id, "provider": target or source or "",
+                        "action": action, "status": "API_ACCEPTED" if actionable else "SKIPPED",
+                        "detail": {"reason": result.get("reason", ""),
+                                   "verification": "remote_recheck_pending" if actionable else "not_sent"},
+                    })
                 except Exception as exc:
                     failed += 1
-                    errors.append({"logical_id": logical_id, "error": str(exc)})
+                    kind = _failure_type(str(exc))
+                    errors.append({"logical_id": logical_id, "provider": target, "type": kind, "error": str(exc)})
+                    audit_pending.append({
+                        "job_id": job_id, "logical_id": logical_id, "provider": target or source or "",
+                        "action": action, "status": "ERROR",
+                        "detail": {"type": kind, "error": str(exc)[:400]},
+                    })
+                    if target and kind in {"AUTH", "UNSUPPORTED", "RATE_LIMIT"}:
+                        circuit_open.add(target)
+                    try:
+                        IntegrityStore().provider_result(target or source or "", str(exc))
+                    except Exception:
+                        pass
 
                 processed += 1
+                if len(audit_pending) >= 50:
+                    flush_audit()
                 pct = min(88, 4 + round((processed / max(len(logical_ids), 1)) * 84))
                 cls._set(
                     job_id,
@@ -209,15 +258,21 @@ class QSOManagerBulkJobManager:
                     results=results[-100:],
                 )
 
+            flush_audit()
             if modified_providers:
                 cls._set(job_id, phase="resync", progress=90, message="Atualizando snapshots das plataformas alteradas…")
                 for provider in sorted(modified_providers):
                     if hub.credentials.configured(provider):
                         try:
                             hub.sync(provider)
+                            IntegrityStore().provider_result(provider, None)
                         except Exception as exc:
                             errors.append({"provider": provider, "error": f"re-sync: {exc}"})
                             failed += 1
+                            try:
+                                IntegrityStore().provider_result(provider, "Re-sync failed: " + str(exc))
+                            except Exception:
+                                pass
                 QSOManagerWorkspace.invalidate_cache()
 
             status = "succeeded" if failed == 0 else "completed_with_errors"
@@ -242,6 +297,7 @@ class QSOManagerBulkJobManager:
                 status="OK" if failed == 0 else "PARTIAL",
             )
         except Exception as exc:
+            flush_audit()
             cls._set(
                 job_id,
                 status="failed",

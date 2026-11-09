@@ -224,6 +224,12 @@ class ParallelSyncCoordinator:
                 "duration_ms": item["duration_ms"],
             })
 
+        try:
+            from .integrity_service import IntegrityStore
+            IntegrityStore().provider_result(provider, None if ok else (result.get("error") or "Erro na atualização"))
+        except Exception:
+            pass
+
     def _trim_history_locked(self) -> None:
         if len(self._jobs) <= self.MAX_HISTORY:
             return

@@ -5,19 +5,24 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.0.9** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.1.0** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.0.9. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.1.0. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
 
-## Melhorias v1.0.9
+## Melhorias v1.1.0 — Central de Integridade
 
-- Cold start com cache **persistente** de análises do workspace e confirmações (não apenas resumos dos snapshots). Revalida automaticamente sempre que o logbook ou a versão mudar.
-- Abre a interface e carrega informações básicas das fontes antes de iniciar correlação pesada.
-- Atualização individual em segundo plano com progresso das páginas WRL.
-- WRL tenta receber até 250 registros por página e recua para 100 quando o servidor rejeita. A velocidade continua sujeita ao provedor.
-- Primeira carga WRL alternativa: em World Radio League, exporte **todo** o logbook como ADIF; em QSO Manager, vá a **Fontes → World Radio League → Importar ADIF completo**. A cópia é local, não altera o log remoto e mantém backup anterior.
-- Para segurança, registros WRL importados sem ID remoto não podem ser editados ou excluídos via API até uma leitura que forneça IDs estáveis.
-- Preserva CRUD auditado da v1.0.8 e os mecanismos de proteção contra duplicidades.
+- **P0 Conciliação por QSO:** quadro comparativo QRZ × WRL/Club Log/eQSL OutBox/HRDLog, com faltantes, sem pareamento, campos divergentes e coberturas por snapshot completo. Diferenças de totais não são confundidas com ausências reais.
+- **P0 Duplicidades:** detecção conservadora por indicativo, data, banda, modo, horário, frequência, RST e grid; modos e bandas distintos não são automaticamente fundidos.
+- **P0 Correções assistidas:** plano QRZ → provedor, prévia, seleção e confirmação para inclusão remota; operações de exclusão e edição continuam independentes e auditadas. Snapshots desatualizados, duplicados e contatos próximos são bloqueados.
+- **P1 Exceções:** categorização de rejeições, autenticação e limites de API; monitor suspende novos pedidos automáticos a provedores com falhas recorrentes.
+- **P1 Central de auditoria:** métricas, casos filtráveis, mudanças de estado, ações e evidências.
+- **P1 QSL/DXCC:** oportunidades por DXCC e DXCC/banda/modo ainda sem evidência de confirmação, sem supor crédito de award.
+- **P1 Decisões:** justificativas e evidências são persistidas em banco SQLite local, inclusive após reinício.
+- **P2 Monitoramento:** opt-in para verificações e atualizações de leitura a cada 6–168 horas enquanto o aplicativo está aberto; sem CRUD automático.
+
+### Como utilizar
+
+Abra **Integridade** no menu. Atualize as fontes em **Fontes**, analise os cartões de cada plataforma e os casos. Para conciliar, escolha **Planejar QRZ → provedor**, revise, selecione os contatos e confirme o envio. Para exceções ou duplicidades, registre a decisão com justificativa. A aba **QSL / DXCC** apresenta oportunidades; **Decisões e auditoria** mantém o histórico. O **Monitoramento** só é ativado com sua autorização explícita.
 
 ## O que o produto faz
 
@@ -62,7 +67,7 @@ Cada snapshot só é substituído depois que o download daquela fonte termina e 
 
 ## LoTW completo e incremental
 
-Na primeira atualização após instalar a v1.0.9, o LoTW migra o snapshot antigo de confirmações para o **log completo de QSOs aceitos**. Nas atualizações seguintes, o QSO Manager usa os marcadores `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL` para consultar somente QSOs/QSLs novos ou atualizados. O snapshot local continua completo; somente o tráfego remoto passa a ser incremental.
+Na primeira atualização após instalar a v1.1.0, o LoTW migra o snapshot antigo de confirmações para o **log completo de QSOs aceitos**. Nas atualizações seguintes, o QSO Manager usa os marcadores `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL` para consultar somente QSOs/QSLs novos ou atualizados. O snapshot local continua completo; somente o tráfego remoto passa a ser incremental.
 
 ## eQSL → QRZ
 
@@ -131,7 +136,7 @@ Consulte [SECURITY.md](SECURITY.md) antes de reportar qualquer problema envolven
 O artefato de produção é:
 
 ```text
-PU2BRU-QSO-Manager-Setup-v1.0.9.exe
+PU2BRU-QSO-Manager-Setup-v1.1.0.exe
 ```
 
 Ele é gerado pelo workflow **Build · Windows Installer** e inclui o runtime necessário. Não é necessário instalar Python, Node.js ou npm.
@@ -140,7 +145,7 @@ A atualização/reinstalação do programa não remove os dados persistentes do 
 
 ### SmartScreen
 
-A v1.0.9 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
+A v1.1.0 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
 
 ## Desenvolvimento
 
@@ -174,7 +179,7 @@ npm run build
 
 ## Qualidade e release gates
 
-A v1.0.9 exige, no CI:
+A v1.1.0 exige, no CI:
 
 - suíte de acceptance imutável;
 - regressão completa do backend;
@@ -214,7 +219,7 @@ Mais detalhes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Escopo de plataforma
 
-| Plataforma | Estado v1.0.9 |
+| Plataforma | Estado v1.1.0 |
 | --- | --- |
 | Windows 11 | **Produção** |
 | Android | **Preview / companion** |
