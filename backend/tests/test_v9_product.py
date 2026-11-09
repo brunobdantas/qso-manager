@@ -67,7 +67,7 @@ def test_bootstrap_and_diagnostics_do_not_expose_secret_values(tmp_path: Path):
     s = service(tmp_path)
     s.credentials.set("QRZ", {"api_key": "super-secret-key"})
     boot = s.bootstrap()
-    assert boot["version"] == "1.0.7"
+    assert boot["version"] == __version__
     text = str(boot)
     assert "super-secret-key" not in text
     diagnostic = s.diagnostics()
