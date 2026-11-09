@@ -38,9 +38,10 @@ def _hash(*items: Any) -> str:
 def _fingerprint(row: dict) -> str:
     # Independent of snapshot array indexes; durable across reimports.
     raw = row.get("canonical_record") or {}
+    qrz_id = ((row.get("source_records") or {}).get("QRZ") or {}).get("external_id")
     return _hash(row.get("call"), row.get("date"),
                  str(row.get("time") or "").replace(":", "")[:6],
-                 row.get("band"), row.get("mode"), raw.get("STATION_CALLSIGN"))
+                 row.get("band"), row.get("mode"), raw.get("STATION_CALLSIGN"), qrz_id)
 
 
 def _normalize(value: Any) -> str:
@@ -418,7 +419,7 @@ class IntegrityService:
             "source": "QRZ", "target": provider, "action": "PUBLISH",
             "signature": report["signature"], "coverage": state["coverage"],
             "total_candidates": len(candidates), "selected": len(ids),
-            "logical_ids": ids, "sample": selected[:20],
+            "logical_ids": ids, "sample": selected,
             "blocked": state["blocked"],
             "ready": bool(state["loaded"] and not state["stale"] and self.workspace._capabilities(provider).get("add")),
             "policy": "Prévia obrigatória; somente inclusões de alta confiança, sem exclusões ou mudanças automáticas",
