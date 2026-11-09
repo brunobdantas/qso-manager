@@ -117,8 +117,8 @@ class V9ProductService(V8OnlineService):
 
     def import_local_adif(self, provider: str, content: str, filename: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
-        if provider not in {"HRD", "HRDLOG"}:
-            raise CloudProviderError("Manual ADIF bootstrap is supported for HRD and HRDLOG")
+        if provider not in {"HRD", "HRDLOG", "WRL"}:
+            raise CloudProviderError("Manual ADIF is supported for HRD, HRDLOG and full WRL exports")
         if provider == "HRDLOG":
             return self.import_hrdlog_adif(content, filename)
         if not str(content or "").strip():
@@ -126,9 +126,15 @@ class V9ProductService(V8OnlineService):
         records, errors = ADIFParser().parse(content)
         if not records:
             raise CloudProviderError("Nenhum QSO válido foi encontrado no ADIF")
+        if provider == "WRL":
+            # Never replace the full local copy with a malformed export.
+            if errors:
+                raise CloudProviderError("ADIF do WRL com erros: " + "; ".join(errors[:3]))
+            if any(not all(record.get(k) for k in ("CALL", "QSO_DATE", "TIME_ON")) for record in records):
+                raise CloudProviderError("Exportação WRL incompleta: CALL, QSO_DATE ou TIME_ON ausente")
         backup = self.snapshots.backup(provider)
         summary = self.snapshots.save(provider, records, {
-            "source": "manual_adif",
+            "source": "manual_wrl_adif" if provider == "WRL" else "manual_adif",
             "coverage": "FULL_EXPORT",
             "filename": (filename or "ham-radio-deluxe.adi")[:255],
             "parse_errors": errors[:20],
