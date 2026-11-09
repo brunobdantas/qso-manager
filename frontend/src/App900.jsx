@@ -5,6 +5,7 @@ const NAV = [
   ['overview','Visão geral','⌂'],
   ['log','Log','◎'],
   ['inbox','Pendências','!'],
+  ['integrity','Integridade','◈'],
   ['qsl','QSL','✓'],
   ['sources','Fontes','◉'],
   ['tools','Ferramentas','⌘'],
@@ -193,6 +194,122 @@ function SourcesPage({status,onChanged,setGlobalMessage,onSyncAll,onSyncProvider
   return <><PageHead eyebrow="FONTES" title="Uma central para todas as conexões." subtitle="As fontes remotas podem ser atualizadas em paralelo, com acompanhamento de progresso e falhas isoladas." action={<Button disabled={globalBusy||!!busy} onClick={onSyncAll}>{globalBusy?'Atualizando…':'Atualizar todas'}</Button>}/>{syncJob&&<SyncProgress job={syncJob}/>}<div className="u-source-grid">{providers.map(p=><Card key={p.provider} title={p.label} subtitle={p.note} action={<span className={'u-dot '+(p.configured?'ok':'')}/>}><div className="u-source-number"><b>{fmt(p.snapshot?.records)}</b><span>registros conhecidos</span><small>Atualizado: {dt(p.snapshot?.downloaded_at)}</small></div><div className="u-source-tags"><Badge>{p.source_kind}</Badge>{p.comparison_role==='qsl_evidence'&&<Badge tone="ok">evidência QSL</Badge>}{p.provider==='QRZ'&&<Badge tone="truth">referência</Badge>}</div><div className="u-source-actions">{!['HRD'].includes(p.provider)&&<Button kind="secondary" small onClick={()=>setConfig(p)}>{p.configured?'Conexão':'Configurar'}</Button>}{p.provider==='HRD'&&<label className="u-file">{p.configured?'Substituir ADIF':'Importar ADIF'}<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRD',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='WRL'&&<label className="u-file">Importar ADIF completo<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('WRL',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'&&<label className="u-file">Reconciliar ADIF<input type="file" accept=".adi,.adif,.txt" onChange={e=>{importAdif('HRDLOG',e.target.files?.[0]);e.target.value=''}}/></label>}{p.provider==='HRDLOG'?<Button small disabled={globalBusy||busy===p.provider||!p.configured||!p.snapshot?.downloaded_at} onClick={updateHrdlog}>{busy===p.provider?'Processando…':'Atualizar online'}</Button>:p.capabilities?.read&&p.source_kind!=='local_adif'&&<Button small disabled={globalBusy||busy===p.provider||!p.configured} onClick={()=>sync(p.provider)}>{busy===p.provider?'Atualizando…':'Atualizar'}</Button>}{p.snapshot?.records>0&&<button className="u-text-danger" disabled={globalBusy||busy===p.provider} onClick={()=>clear(p.provider)}>limpar cópia local</button>}</div></Card>)}</div>{config&&<ConnectionModal source={config} onClose={()=>setConfig(null)} onChanged={async()=>{await onChanged();setConfig(null)}}/>}</>
 }
 
+
+function IntegrityPage(){
+  const [tab,setTab]=useState('cases'),[data,setData]=useState(null),[qsl,setQsl]=useState(null)
+  const [history,setHistory]=useState(null),[monitor,setMonitor]=useState(null),[plan,setPlan]=useState(null)
+  const [provider,setProvider]=useState(''),[kind,setKind]=useState(''),[search,setSearch]=useState(''),[page,setPage]=useState(1)
+  const [busy,setBusy]=useState(''),[error,setError]=useState(''),[message,setMessage]=useState('')
+  const [chosen,setChosen]=useState(new Set()),[reason,setReason]=useState(''),[job,setJob]=useState(null)
+  const [decision,setDecision]=useState(null),[decisionReason,setDecisionReason]=useState('')
+  const [hours,setHours]=useState(12)
+  const qs=new URLSearchParams({page:String(page),page_size:'50'})
+  if(provider)qs.set('provider',provider)
+  if(kind)qs.set('kind',kind)
+  if(search)qs.set('q',search.trim())
+  async function loadReport(){setBusy('report');setError('');try{setData(await api('/api/integrity/report?'+qs.toString()))}catch(e){setError(e.message)}finally{setBusy('')}}
+  async function loadTab(next=tab){
+    setError('')
+    try{
+      if(next==='qsl'){setQsl(await api('/api/integrity/qsl-dxcc?limit=150'))}
+      if(next==='audit'){setHistory(await api('/api/integrity/history?limit=100'))}
+      if(next==='monitor'){const m=await api('/api/integrity/monitor');setMonitor(m);setHours(m.monitor?.interval_hours||12)}
+    }catch(e){setError(e.message)}
+  }
+  useEffect(()=>{loadReport()},[page,provider,kind,search])
+  useEffect(()=>{loadTab(tab)},[tab])
+  useEffect(()=>{
+    const timer=setInterval(async()=>{
+      try{
+        const m=await api('/api/integrity/monitor')
+        setMonitor(m)
+        if(m.snapshot_changes_pending){await loadReport()}
+      }catch{}
+    },60000)
+    return()=>clearInterval(timer)
+  },[page,provider,kind,search])
+  const statusLabel={ALIGNED_WITH_QRZ:'Alinhado',DIVERGENT:'Divergências',NO_COMPLETE_SNAPSHOT:'Sem log completo',PROVIDER_ERROR:'Erro de origem'}
+  const cases=data?.items||[],summary=data?.summary||{},metrics=summary.providers||{}
+  async function preview(p){
+    setBusy('plan');setPlan(null);setChosen(new Set());setMessage('')
+    try{
+      const result=await api('/api/integrity/plan/'+p+'?limit=100')
+      setPlan(result)
+      setChosen(new Set((result.logical_ids||[]).slice(0,20)))
+      setReason('Conciliação assistida QRZ → '+p+' após revisão dos candidatos.')
+    }catch(e){setError(e.message)}finally{setBusy('')}
+  }
+  async function apply(){
+    if(!plan||!chosen.size||reason.trim().length<5)return
+    if(!window.confirm('CONFIRMAR inclusão de '+chosen.size+' QSO(s) em '+plan.target+'? Isso modifica o logbook remoto. Nenhum registro será excluído.'))return
+    setBusy('apply');setMessage('Executando operações auditadas…')
+    try{
+      let state=await api('/api/integrity/apply',{method:'POST',body:JSON.stringify({
+        target:plan.target,signature:plan.signature,logical_ids:[...chosen],reason,confirm:true
+      })})
+      setJob(state)
+      for(let i=0;i<2400;i++){
+        if(['succeeded','failed','completed_with_errors'].includes(state.status))break
+        await new Promise(resolve=>setTimeout(resolve,800))
+        state=await api('/api/qso-manager/bulk/jobs/'+encodeURIComponent(state.job_id))
+        setJob(state)
+      }
+      setMessage((state.message||'Operação finalizada')+' Consulte Auditoria para o histórico.')
+      setPlan(null)
+      await loadReport()
+    }catch(e){setError(e.message)}finally{setBusy('')}
+  }
+  async function saveDecision(){
+    if(!decision||decisionReason.trim().length<5)return
+    setBusy('decision')
+    try{
+      await api('/api/integrity/decision',{method:'POST',body:JSON.stringify({
+        case_key:decision.case_key,provider:decision.provider,decision:decision.choice,
+        reason:decisionReason,evidence:{call:decision.call,date:decision.date}
+      })})
+      setDecision(null);setDecisionReason('');setMessage('Decisão salva no histórico local.')
+      await loadReport()
+    }catch(e){setError(e.message)}finally{setBusy('')}
+  }
+  async function monitorSave(enabled){
+    setBusy('monitor')
+    try{
+      const m=await api('/api/integrity/monitor',{method:'PUT',body:JSON.stringify({enabled,interval_hours:Number(hours)})})
+      setMonitor({...monitor,monitor:m})
+      setMessage(enabled?'Monitoramento somente leitura ativado.':'Monitoramento automático desativado.')
+    }catch(e){setError(e.message)}finally{setBusy('')}
+  }
+  return <div className="u-integrity">
+    <PageHead eyebrow="SAÚDE DOS LOGBOOKS" title="Integridade e conciliação" subtitle="QRZ como referência. Divergências por QSO, duplicidades explicadas, correções assistidas e trilha de auditoria." action={<Button kind="secondary" disabled={busy==='report'} onClick={loadReport}>↻ Recalcular</Button>}/>
+    {error&&<Notice tone="error">{error}</Notice>}{message&&<Notice>{message}</Notice>}
+    <div className="u-chips">{[['cases','Conciliação'],['qsl','QSL / DXCC'],['audit','Decisões e auditoria'],['monitor','Monitoramento']].map(([key,label])=><button key={key} className={tab===key?'active':''} onClick={()=>setTab(key)}>{label}</button>)}</div>
+    {tab==='cases'&&<>
+      <div className="u-metrics static">
+        <div><span>QSOs no QRZ</span><b>{fmt(summary.reference_records)}</b></div>
+        <div><span>Ocorrências identificadas</span><b>{fmt(summary.cases)}</b></div>
+        <div><span>Ausências</span><b>{fmt(summary.by_kind?.MISSING)}</b></div>
+        <div><span>Duplicidades suspeitas</span><b>{fmt(summary.by_kind?.DUPLICATE)}</b></div>
+      </div>
+      <div className="u-integrity-providers">{Object.entries(metrics).map(([p,m])=><Card key={p} title={p} subtitle={statusLabel[m.state]||m.state} action={<Badge tone={m.state==='ALIGNED_WITH_QRZ'?'ok':m.state==='NO_COMPLETE_SNAPSHOT'?'neutral':'warn'}>{m.coverage||'Cobertura desconhecida'}</Badge>}><div className="u-integrity-stats"><span>Registros <b>{fmt(m.records)}</b></span><span>Faltantes <b>{fmt(m.missing)}</b></span><span>Extras <b>{fmt(m.extra)}</b></span><span>Diferenças <b>{fmt(m.different)}</b></span><span>Dup. <b>{fmt(m.duplicates)}</b></span></div>{m.exception&&<Notice tone="warn">{m.exception.classification}: {m.exception.message}</Notice>}<Button small disabled={!m.loaded||busy==='plan'} onClick={()=>preview(p)}>Planejar QRZ → {p}</Button></Card>)}</div>
+      {plan&&<Card title={'Plano seguro: QRZ → '+plan.target} subtitle={'Somente inclusões • '+fmt(plan.total_candidates)+' candidatos elegíveis • '+fmt(plan.blocked)+' bloqueados'} action={<Button small kind="secondary" onClick={()=>setPlan(null)}>Fechar</Button>}>
+        <Notice>Uma inclusão só será executada após sua confirmação; registros já presentes, sem suporte ou suspeitos de duplicidade são excluídos automaticamente do plano.</Notice>
+        <div className="u-integrity-actions"><Button small kind="secondary" onClick={()=>setChosen(new Set(plan.logical_ids||[]))}>Selecionar lote ({fmt(plan.selected)})</Button><Button small kind="secondary" onClick={()=>setChosen(new Set())}>Desmarcar</Button></div>
+        <div className="u-integrity-cases">{(plan.sample||[]).map(c=><label key={c.case_key} className="u-integrity-case"><input type="checkbox" checked={chosen.has(c.logical_id)} onChange={e=>setChosen(v=>{const n=new Set(v);e.target.checked?n.add(c.logical_id):n.delete(c.logical_id);return n})}/><b>{c.call}</b><small>{c.date} {c.time} · {c.band} {c.mode}</small></label>)}</div>
+        <div className="u-integrity-actions"><input value={reason} onChange={e=>setReason(e.target.value)} placeholder="Justificativa da intervenção"/><Button disabled={!chosen.size||busy==='apply'||reason.trim().length<5} onClick={apply}>Aplicar {fmt(chosen.size)} inclusão(ões)</Button></div>
+      </Card>}
+      {job&&<Notice>Job {job.job_id?.slice(0,8)}: {job.status} · {fmt(job.succeeded)} concluídos · {fmt(job.failed)} falhas. {job.message}</Notice>}
+      <div className="u-filterbar u-integrity-filters"><div className="u-search"><span>⌕</span><input placeholder="Buscar indicativo" value={search} onChange={e=>{setSearch(e.target.value.toUpperCase());setPage(1)}}/></div><select value={provider} onChange={e=>{setProvider(e.target.value);setPage(1)}}><option value="">Todas as fontes</option>{Object.keys(metrics).map(x=><option key={x}>{x}</option>)}</select><select value={kind} onChange={e=>{setKind(e.target.value);setPage(1)}}><option value="">Todos os problemas</option><option value="MISSING">Ausentes</option><option value="EXTRA">Sem QRZ</option><option value="DIFFERENCE">Campos divergentes</option><option value="DUPLICATE">Possíveis duplicidades</option></select></div>
+      {busy==='report'&&!data?<div className="u-loading">Comparando registros…</div>:<div className="u-integrity-cases">{cases.map(c=><article key={c.case_key} className="u-integrity-case"><div className="u-integrity-row"><Badge tone={c.kind==='MISSING'?'warn':c.kind==='DUPLICATE'?'danger':'neutral'}>{c.kind}</Badge><b>{c.call}</b><small>{c.date} {c.time} · {c.band} {c.mode}</small><Badge>{c.provider}</Badge>{c.decision&&<Badge tone="ok">{c.decision}</Badge>}</div><p>{c.reason}{c.field&&<span> · {c.field}: QRZ {String(c.reference_value)} / {c.provider} {String(c.provider_value)}</span>}</p><div className="u-integrity-actions">{c.kind==='DUPLICATE'&&<Button small kind="secondary" onClick={()=>{setDecision({...c,choice:'KEEP_SEPARATE'});setDecisionReason('QSOs independentes confirmados após conferência de banda, modo e horário.')}}>Manter separados</Button>}{c.kind==='DUPLICATE'&&<Button small kind="secondary" onClick={()=>{setDecision({...c,choice:'CONFIRMED_DUPLICATE'});setDecisionReason('Duplicidade confirmada mediante revisão manual das evidências.')}}>Confirmar duplicidade</Button>}<Button small kind="secondary" onClick={()=>{setDecision({...c,choice:'ACCEPT_EXCEPTION'});setDecisionReason('Limitação específica do provedor aceita após revisão.')}}>Aceitar exceção</Button><Button small kind="secondary" onClick={()=>{setDecision({...c,choice:'NEEDS_REVIEW'});setDecisionReason('Verificar evidências do QSO antes de qualquer correção remota.')}}>Marcar revisão</Button></div></article>)}</div>}
+      {!cases.length&&busy!=='report'&&<Empty title="Nenhuma ocorrência nesta seleção">Fontes sem export completo não são consideradas conciliadas.</Empty>}
+      <div className="u-pager"><Button small kind="secondary" disabled={page<=1} onClick={()=>setPage(n=>n-1)}>← Anterior</Button><span>{fmt(data?.total)} ocorrência(s) · Página {page}</span><Button small kind="secondary" disabled={page*50>=(data?.total||0)} onClick={()=>setPage(n=>n+1)}>Próxima →</Button></div>
+      {decision&&<div className="u-modal-bg"><div className="u-modal"><div className="u-modal-title"><div><small>DECISÃO AUDITÁVEL</small><h2>{decision.call} · {decision.provider}</h2></div><button onClick={()=>setDecision(null)}>×</button></div><Notice>Esta decisão registra a revisão; não exclui nem modifica QSOs remotamente.</Notice><p>{decision.reason}</p><div className="u-fields"><label><span>Justificativa</span><textarea rows={4} value={decisionReason} onChange={e=>setDecisionReason(e.target.value)}/></label></div><div className="u-modal-actions"><Button kind="secondary" onClick={()=>setDecision(null)}>Cancelar</Button><Button disabled={busy==='decision'||decisionReason.trim().length<5} onClick={saveDecision}>Salvar decisão</Button></div></div></div>}
+    </>}
+    {tab==='qsl'&&<><div className="u-metrics static"><div><span>DXCCs com evidência de QSL</span><b>{fmt(qsl?.summary?.confirmed_dxcc)}</b></div><div><span>DXCCs ainda não confirmados</span><b>{fmt(qsl?.summary?.pending_dxcc)}</b></div><div><span>QSOs prioritários</span><b>{fmt(qsl?.summary?.priority_qsos)}</b></div></div><Notice>As prioridades refletem novas possibilidades de DXCC/banda/modo. Não garantem confirmação nem homologação de award.</Notice><div className="u-integrity-cases">{(qsl?.items||[]).map((x,i)=><article key={x.call+x.date+x.time+i} className="u-integrity-case"><div className="u-integrity-row"><Badge tone={x.new_dxcc?'warn':'neutral'}>Prioridade {x.priority}</Badge><b>{x.call}</b><small>{x.date} · {x.band} {x.mode}</small><Badge>DXCC {x.dxcc}</Badge></div><p>{x.country||'Entidade não informada'} · {x.reason}</p></article>)}</div>{qsl&&!qsl.ready&&<Empty title="Sem dados do QRZ">Importe ou atualize o QRZ para analisar oportunidades.</Empty>}</>}
+    {tab==='audit'&&<><Card title="Histórico de decisões" subtitle="Justificativas e evidências armazenadas no computador.">{(history?.decisions||[]).slice(0,100).map(x=><article className="u-integrity-history" key={x.id}><b>{x.decision} · {x.provider}</b><small>{dt(x.created_at)}</small><p>{x.reason}</p></article>)}{!history?.decisions?.length&&<Empty title="Sem decisões registradas"/>}</Card><Card title="Intervenções e sincronizações" subtitle="Rastreabilidade de ações do QSO Manager.">{(history?.actions||[]).slice(0,50).map(x=><article className="u-integrity-history" key={x.id}><b>{x.kind} · {x.status}</b><small>{dt(x.timestamp)}</small><p>{x.summary}</p></article>)}</Card><Card title="Histórico de medições" subtitle="Conciliação reavaliada quando os snapshots mudam.">{(history?.scans||[]).map((x,i)=><div className="u-integrity-history" key={i}><b>{dt(x.created_at)}</b><small>{fmt(x.summary?.cases)} ocorrências · QRZ {fmt(x.summary?.reference_records)}</small></div>)}</Card></>}
+    {tab==='monitor'&&<><Card title="Monitoramento contínuo" subtitle="Somente leituras. Reavalia mudanças de snapshots e pode atualizar fontes automaticamente enquanto o aplicativo estiver aberto."><Notice>Por segurança, o monitoramento remoto é opt-in. Falhas persistentes, autenticação e limites de API interrompem novas tentativas automáticas por provedor.</Notice><div className="u-integrity-actions"><label>Intervalo entre atualizações<select value={hours} onChange={e=>setHours(Number(e.target.value))}>{[6,12,24,48,72,168].map(n=><option key={n} value={n}>{n} horas</option>)}</select></label><Button kind={monitor?.monitor?.enabled?'secondary':'primary'} disabled={busy==='monitor'} onClick={()=>monitorSave(!monitor?.monitor?.enabled)}>{monitor?.monitor?.enabled?'Desativar monitoramento':'Ativar monitoramento'}</Button></div><div className="u-integrity-history"><b>Última atualização automática</b><p>{dt(monitor?.monitor?.last_started)}</p><b>Alterações locais aguardando análise</b><p>{monitor?.snapshot_changes_pending?'Sim':'Não'}</p><b>Provedores temporariamente bloqueados</b><p>{monitor?.monitor?.blocked_providers?.join(', ')||'Nenhum'}</p></div><Button kind="secondary" onClick={async()=>{setBusy('check');try{await api('/api/integrity/monitor/check',{method:'POST',body:'{}'});await loadTab('monitor');await loadReport();setMessage('Verificação concluída.')}catch(e){setError(e.message)}finally{setBusy('')}}}>Verificar snapshots agora</Button></Card></>}
+  </div>
+}
+
 function AdvancedCompare(){
   const seed=name=>({id:crypto.randomUUID?.()||Math.random().toString(36),name,file:null,coverage:'FULL_EXPORT'});const [sources,setSources]=useState([seed('QRZ'),seed('HRD')]),[reference,setReference]=useState(0),[result,setResult]=useState(null),[busy,setBusy]=useState(false),[msg,setMsg]=useState('')
   function patch(i,changes){setSources(v=>v.map((x,j)=>j===i?{...x,...changes}:x))}
@@ -307,5 +424,5 @@ export default function App900(){
   }
   async function refreshIssues(){try{const [issues,qsl]=await Promise.all([api('/api/product/issues?limit=500'),api('/api/product/qsl')]);setBoot(v=>({...v,issues,qsl}))}catch(e){setMessage('Erro: '+e.message)}}
   const nav=n=>setPage(n)
-  return <div className="u-app"><aside className="u-sidebar"><div className="u-brand"><div className="u-brand-mark">PU2BRU</div><span><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></span></div><nav>{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav><div className="u-sidebar-foot"><span className={boot?'ok':''}/><div><b>{indexing?'Preparando índice':'Workspace pronto'}</b><small>{indexing?'Fontes locais disponíveis':`${fmt(boot.workspace?.summary?.logical_qsos)} QSOs lógicos`}</small></div></div></aside><header className="u-mobile-top"><div><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></div><Button small disabled={busy} onClick={syncAll}>↻</Button></header><main className="u-main">{message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}<button className="u-close" onClick={()=>setMessage('')}>×</button></Notice>}{!boot&&<div className="u-loading-screen"><div className="u-pulse">PU2BRU</div><h2>Montando seu workspace…</h2><p>Validando banco local, frontend e fontes.</p></div>}{boot&&<>{indexing&&<Notice>Interface disponível. Reconciliando os QSOs e as confirmações em segundo plano…</Notice>}{page==='overview'&&<Overview boot={boot} navigate={nav} syncAll={syncAll} busy={busy} syncJob={syncJob}/>} {page==='log'&&<LogPage workspace={boot.workspace}/>} {page==='inbox'&&<InboxPage issues={boot.issues} onRefresh={refreshIssues}/>} {page==='qsl'&&<QslPage qsl={boot.qsl} onRefresh={refreshIssues} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='sources'&&<SourcesPage status={boot.status} onChanged={refresh} setGlobalMessage={setMessage} onSyncAll={syncAll} onSyncProvider={syncProvider} syncJob={syncJob} globalBusy={busy}/>} {page==='tools'&&<ToolsPage workspace={boot.workspace} status={boot.status} setGlobalMessage={setMessage}/>}</>}</main><nav className="u-bottom">{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav></div>
+  return <div className="u-app"><aside className="u-sidebar"><div className="u-brand"><div className="u-brand-mark">PU2BRU</div><span><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></span></div><nav>{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav><div className="u-sidebar-foot"><span className={boot?'ok':''}/><div><b>{indexing?'Preparando índice':'Workspace pronto'}</b><small>{indexing?'Fontes locais disponíveis':`${fmt(boot.workspace?.summary?.logical_qsos)} QSOs lógicos`}</small></div></div></aside><header className="u-mobile-top"><div><b>QSO Manager</b><small>PU2BRU · v{VERSION}</small></div><Button small disabled={busy} onClick={syncAll}>↻</Button></header><main className="u-main">{message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}<button className="u-close" onClick={()=>setMessage('')}>×</button></Notice>}{!boot&&<div className="u-loading-screen"><div className="u-pulse">PU2BRU</div><h2>Montando seu workspace…</h2><p>Validando banco local, frontend e fontes.</p></div>}{boot&&<>{indexing&&<Notice>Interface disponível. Reconciliando os QSOs e as confirmações em segundo plano…</Notice>}{page==='overview'&&<Overview boot={boot} navigate={nav} syncAll={syncAll} busy={busy} syncJob={syncJob}/>} {page==='log'&&<LogPage workspace={boot.workspace}/>} {page==='inbox'&&<InboxPage issues={boot.issues} onRefresh={refreshIssues}/>} {page==='integrity'&&<IntegrityPage/>} {page==='qsl'&&<QslPage qsl={boot.qsl} onRefresh={refreshIssues} onChanged={refresh} setGlobalMessage={setMessage}/>} {page==='sources'&&<SourcesPage status={boot.status} onChanged={refresh} setGlobalMessage={setMessage} onSyncAll={syncAll} onSyncProvider={syncProvider} syncJob={syncJob} globalBusy={busy}/>} {page==='tools'&&<ToolsPage workspace={boot.workspace} status={boot.status} setGlobalMessage={setMessage}/>}</>}</main><nav className="u-bottom">{NAV.map(([id,label,icon])=><button key={id} className={page===id?'active':''} onClick={()=>nav(id)}><i>{icon}</i><span>{label}</span>{id==='inbox'&&boot?.issues?.total>0&&<em>{boot.issues.total>99?'99+':boot.issues.total}</em>}</button>)}</nav></div>
 }
