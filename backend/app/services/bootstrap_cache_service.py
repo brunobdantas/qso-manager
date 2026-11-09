@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from .cloud_snapshot_store import CloudSnapshotStore
+from ..core.version import __version__
 
 
 class BootstrapCache:
@@ -24,7 +25,7 @@ class BootstrapCache:
         self.path: Path = snapshots.root / "bootstrap-analysis.v1.json.gz"
 
     def signature(self) -> list[list[Any]]:
-        signatures: list[list[Any]] = []
+        signatures: list[list[Any]] = [["APP_VERSION", __version__, None]]
         for provider in self.PROVIDERS:
             path = self.snapshots._path(provider)
             try:
