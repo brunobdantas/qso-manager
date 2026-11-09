@@ -92,6 +92,13 @@ class IntegrityStore:
                     signature TEXT NOT NULL, summary TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 );
+                CREATE TABLE IF NOT EXISTS corrections(
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    job_id TEXT NOT NULL, logical_id TEXT NOT NULL, provider TEXT NOT NULL,
+                    action TEXT NOT NULL, status TEXT NOT NULL,
+                    detail TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_corrections_job ON corrections(job_id);
                 CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY,value TEXT NOT NULL);
             """)
 
@@ -178,6 +185,25 @@ class IntegrityStore:
                 {"created_at": r["created_at"], "summary": json.loads(r["summary"]), "signature": r["signature"]}
                 for r in db.execute("SELECT * FROM scans ORDER BY id DESC LIMIT ?", (min(limit, 100),))
             ]
+
+
+    def record_correction(self, job_id: str, logical_id: str, provider: str,
+                          action: str, status: str, detail: Optional[dict] = None) -> None:
+        # Persist outcome and provenance, never credentials or raw API bodies.
+        safe_detail = {str(k): str(v)[:600] for k, v in (detail or {}).items()}
+        with _LOCK, self._connect() as db:
+            db.execute(
+                "INSERT INTO corrections(job_id,logical_id,provider,action,status,detail,created_at) VALUES(?,?,?,?,?,?,?)",
+                (job_id, logical_id, provider.upper(), action.upper(),
+                 status.upper(), json.dumps(safe_detail, ensure_ascii=False), _now()),
+            )
+            db.commit()
+
+    def corrections(self, limit: int = 100) -> list[dict]:
+        with self._connect() as db:
+            rows = db.execute("SELECT * FROM corrections ORDER BY id DESC LIMIT ?",
+                              (min(max(1, limit), 1000),)).fetchall()
+        return [dict(r) for r in rows]
 
     def setting(self, key: str, default: Any = None) -> Any:
         with self._connect() as db:
@@ -354,7 +380,16 @@ class IntegrityService:
                     counters[case["provider"]]["blocked"] += 1
             by_kind[case["kind"]] += 1
 
+        open_by_provider = defaultdict(int)
+        accepted_by_provider = defaultdict(int)
+        for case in cases:
+            if case.get("decision") in ("KEEP_SEPARATE", "ACCEPT_EXCEPTION", "RESOLVED"):
+                accepted_by_provider[case["provider"]] += 1
+            else:
+                open_by_provider[case["provider"]] += 1
         for provider, metrics in counters.items():
+            metrics["open_cases"] = open_by_provider[provider]
+            metrics["accepted_cases"] = accepted_by_provider[provider]
             err = errors.get(provider, {})
             metrics["exception"] = err if err.get("active") else None
             if not reference_present:
@@ -367,6 +402,8 @@ class IntegrityService:
                 metrics["state"] = "PROVIDER_ERROR"
             elif all(metrics[x] == 0 for x in ("missing", "extra", "different", "duplicates")):
                 metrics["state"] = "ALIGNED_WITH_QRZ"
+            elif metrics["open_cases"] == 0 and metrics["accepted_cases"] > 0:
+                metrics["state"] = "RECONCILED_WITH_EXCEPTIONS"
             else:
                 metrics["state"] = "DIVERGENT"
 
