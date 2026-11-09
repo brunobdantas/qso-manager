@@ -39,7 +39,7 @@ class ParallelSyncCoordinator:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._active_job_id: Optional[str] = None
 
-    def start(self) -> Dict[str, Any]:
+    def start(self, targets: Optional[list[str]] = None) -> Dict[str, Any]:
         with self._lock:
             if self._active_job_id:
                 active = self._jobs.get(self._active_job_id)
@@ -53,6 +53,12 @@ class ParallelSyncCoordinator:
                 for row in status.get("providers", [])
             }
             sync_order = list(service.SYNC_PROVIDERS)
+            if targets is not None:
+                requested = {str(name).strip().upper() for name in targets}
+                unknown = requested.difference(service.SYNC_PROVIDERS)
+                if unknown:
+                    raise ValueError("Unsupported sync providers: " + ", ".join(sorted(unknown)))
+                sync_order = [name for name in sync_order if name in requested]
 
             providers: Dict[str, Dict[str, Any]] = {}
             configured_targets = []
