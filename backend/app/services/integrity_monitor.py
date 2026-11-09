@@ -66,6 +66,13 @@ class IntegrityMonitor:
         # interval_hours after the user opts in.
         while not cls._stop.wait(90):
             try:
+                if cls.settings()["enabled"]:
+                    engine = IntegrityService()
+                    last = engine.store.scans(limit=1)
+                    current = engine.signature()
+                    if not last or last[0]["signature"] != current:
+                        # Rebuild only after a changed local snapshot; no remote write.
+                        engine.report(page=1, page_size=10)
                 cls.tick()
             except Exception:
                 # Monitoring must never bring down the local API.
@@ -100,7 +107,12 @@ class IntegrityMonitor:
         engine = IntegrityService()
         latest = engine.store.scans(limit=1)
         signature = engine.signature()
+        history = engine.store.scans(limit=2)
+        delta = (int(history[0]["summary"].get("cases", 0)) -
+                 int(history[1]["summary"].get("cases", 0))) if len(history) > 1 else None
         return {"current_signature": signature,
                 "last_scanned_signature": latest[0]["signature"] if latest else None,
                 "snapshot_changes_pending": not latest or latest[0]["signature"] != signature,
+                "last_cases": latest[0]["summary"].get("cases") if latest else None,
+                "net_case_variation": delta,
                 "monitor": cls.settings()}
