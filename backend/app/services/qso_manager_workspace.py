@@ -507,9 +507,12 @@ class QSOManagerWorkspace:
             refs = row["refs"]
             item = {"logical_id": logical_id, "call": row["call"], "date": row["date"], "time": row["time"], "providers": row["providers"]}
             if action == "PUBLISH":
-                if not target_name or not self._capabilities(target_name).get("add"):
+                if not target_name or target_name not in self.hub.REMOTE_PROVIDERS or not self._capabilities(target_name).get("add"):
                     unsupported += 1
                     item["status"] = "unsupported"
+                elif row.get("duplicate"):
+                    skipped += 1
+                    item["status"] = "duplicate_review_required"
                 elif target_name in refs:
                     skipped += 1
                     item["status"] = "already_present"
@@ -552,6 +555,9 @@ class QSOManagerWorkspace:
                 elif not self._capabilities(target_name).get("add"):
                     unsupported += 1
                     item["status"] = "target_unsupported"
+                elif delete_source:
+                    unsupported += 1
+                    item["status"] = "source_deletion_requires_separate_verified_action"
                 elif delete_source and not self._capabilities(source_name).get("delete"):
                     unsupported += 1
                     item["status"] = "source_delete_unsupported"
