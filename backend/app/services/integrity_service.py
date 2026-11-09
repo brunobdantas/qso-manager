@@ -20,6 +20,7 @@ from ..core.runtime import user_data_root
 from .qso_manager_workspace import QSOManagerWorkspace
 
 PROVIDERS = ("WRL", "CLUBLOG", "EQSL", "HRDLOG")
+ASSISTED_WRITABLE = {"WRL", "CLUBLOG", "EQSL"}  # HRDLog has no verifiable full-log read API
 FULL_COVERAGE = {"API_FULL_SYNC", "FULL_EXPORT"}
 COMPARE_FIELDS = ("RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY", "NAME", "QTH", "COMMENT")
 DECISIONS = {"KEEP_SEPARATE", "CONFIRMED_DUPLICATE", "ACCEPT_EXCEPTION", "NEEDS_REVIEW", "RESOLVED"}
@@ -314,7 +315,7 @@ class IntegrityService:
                         continue
                     if provider not in refs:
                         counters[provider]["missing"] += 1
-                        can_add = bool(caps[provider].get("add")) and not counters[provider]["stale"]
+                        can_add = provider in ASSISTED_WRITABLE and bool(caps[provider].get("add")) and not counters[provider]["stale"]
                         can_add = can_add and not row["duplicate"] and not errors.get(provider, {}).get("active")
                         nearby = False
                         try:
@@ -472,7 +473,7 @@ class IntegrityService:
             "total_candidates": len(candidates), "selected": len(ids),
             "logical_ids": ids, "sample": selected,
             "blocked": state["blocked"],
-            "ready": bool(state["loaded"] and not state["stale"] and self.workspace._capabilities(provider).get("add")),
+            "ready": bool(provider in ASSISTED_WRITABLE and state["loaded"] and not state["stale"] and self.workspace._capabilities(provider).get("add")),
             "policy": "Prévia obrigatória; somente inclusões de alta confiança, sem exclusões ou mudanças automáticas",
         }
 
