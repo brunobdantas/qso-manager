@@ -41,8 +41,12 @@ class IntegrityMonitor:
     def configure(cls, enabled: bool, interval_hours: int = 12):
         hours = max(6, min(168, int(interval_hours)))
         store = IntegrityStore()
+        was_enabled = bool(store.setting("monitor_enabled", False))
         store.set_setting("monitor_enabled", bool(enabled))
         store.set_setting("monitor_interval_hours", hours)
+        if enabled and not was_enabled:
+            # Schedule the first remote read after the selected interval.
+            store.set_setting("monitor_last_started", time.time())
         if enabled:
             cls.start()
         return cls.settings()
