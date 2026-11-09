@@ -14,6 +14,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .cloud_hub_fast_service import CloudHubService
 from .qso_manager_activity import QSOManagerActivityStore
 from .qso_manager_workspace import QSOManagerWorkspace
+from .integrity_service import IntegrityStore, _failure_type
 
 
 class QSOManagerBulkJobManager:
@@ -46,7 +47,7 @@ class QSOManagerBulkJobManager:
                 return
             finished = [
                 (job_id, job) for job_id, job in cls._jobs.items()
-                if job.get("status") in {"succeeded", "failed"}
+                if job.get("status") in {"succeeded", "failed", "completed_with_errors"}
             ]
             finished.sort(key=lambda pair: pair[1].get("completed_at") or pair[1].get("created_at") or "")
             for job_id, _ in finished[: max(0, len(cls._jobs) - cls._max_history)]:
@@ -119,6 +120,7 @@ class QSOManagerBulkJobManager:
         )
         modified_providers = set()
         processed = succeeded = failed = 0
+        circuit_open = set()
         errors: List[Dict[str, Any]] = []
         results: List[Dict[str, Any]] = []
 
@@ -139,8 +141,17 @@ class QSOManagerBulkJobManager:
                     refs = row["refs"]
                     result: Dict[str, Any]
                     actionable = True
-
-                    if action == "PUBLISH":
+                    fresh = workspace.plan_bulk(action, [logical_id], target=target,
+                                                source=source, changes=changes,
+                                                delete_source=delete_source)
+                    reason = fresh["sample"][0]["status"]
+                    if target in circuit_open:
+                        actionable = False
+                        result = {"logical_id": logical_id, "status": "skipped", "reason": "provider_circuit_open"}
+                    elif fresh["actionable"] != 1:
+                        actionable = False
+                        result = {"logical_id": logical_id, "status": "skipped", "reason": reason}
+                    elif action == "PUBLISH":
                         if not target or target in refs:
                             actionable = False
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target already present"}
@@ -194,7 +205,14 @@ class QSOManagerBulkJobManager:
                     results.append({"logical_id": logical_id, "result": result})
                 except Exception as exc:
                     failed += 1
-                    errors.append({"logical_id": logical_id, "error": str(exc)})
+                    kind = _failure_type(str(exc))
+                    errors.append({"logical_id": logical_id, "provider": target, "type": kind, "error": str(exc)})
+                    if target and kind in {"AUTH", "UNSUPPORTED", "RATE_LIMIT"}:
+                        circuit_open.add(target)
+                    try:
+                        IntegrityStore().provider_result(target or source or "", str(exc))
+                    except Exception:
+                        pass
 
                 processed += 1
                 pct = min(88, 4 + round((processed / max(len(logical_ids), 1)) * 84))
