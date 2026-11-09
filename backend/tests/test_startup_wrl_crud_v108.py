@@ -13,7 +13,7 @@ def test_snapshot_summary_can_load_without_parsing_full_data(tmp_path, monkeypat
         {"CALL": "PY2AAA", "QSO_DATE": "2026-11-09", "TIME_ON": "10:00:00", "MODE": "FT8"},
         {"CALL": "PY2BBB", "QSO_DATE": "2026-11-09", "TIME_ON": "10:01:00", "MODE": "FT8"},
     ])
-    assert (tmp_path / "wrl.summary.json").exists()
+    assert (tmp_path / "cloud_snapshots" / "wrl.summary.json").exists()
     # In a new service instance, summaries must not parse the full 26k+ QSO JSON.
     another = CloudSnapshotStore(root=tmp_path)
     monkeypatch.setattr(another, "load", lambda *_: (_ for _ in ()).throw(AssertionError("large snapshot parsed")))
@@ -22,7 +22,8 @@ def test_snapshot_summary_can_load_without_parsing_full_data(tmp_path, monkeypat
 
 
 def test_legacy_snapshot_is_upgraded_to_small_summary(tmp_path):
-    (tmp_path / "wrl.json").write_text(json.dumps({
+    (tmp_path / "cloud_snapshots").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "cloud_snapshots" / "wrl.json").write_text(json.dumps({
         "provider": "WRL", "downloaded_at": "2026-11-09T00:00:00Z",
         "records": [{"CALL": "ZZ1A"}], "metadata": {}
     }), encoding="utf-8")
