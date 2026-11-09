@@ -1,3 +1,16 @@
+## [1.1.0] - 2026-11-09
+
+### Integridade, inteligência e monitoramento
+
+- Conciliação por QSO do QRZ contra cada snapshot completo e métricas auditáveis por provedor.
+- Motor de detecção de duplicidades com regras conservadoras e decisões de revisão.
+- Inclusões assistidas do QRZ com prévia, assinatura de snapshots, confirmação e execução em lote auditada.
+- Exceções persistentes de provedor, classificação de falhas e bloqueio de tentativas automáticas repetidas.
+- Central de integridade com páginas de casos, QSL/DXCC, auditoria e monitoramento.
+- Decisões e evidências persistidas em SQLite no armazenamento de usuário.
+- Monitoramento opcional somente leitura, em intervalos de 6 horas ou mais enquanto o aplicativo estiver em execução.
+- Revalidação da elegibilidade imediatamente antes de escritas em lote.
+
 ## [1.0.9] - 2026-11-09
 
 ### Cold start e atualização de fontes
