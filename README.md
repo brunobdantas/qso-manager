@@ -11,10 +11,13 @@
 
 ## Melhorias v1.0.9
 
-- Abertura não bloqueante: navegação disponível enquanto a reconciliação/QSL é calculada.
-- Resumos persistentes dos snapshots para acelerar abertura e consulta de status.
-- World Radio League: progresso por página/registro, retentativas seguras e detecção de cursor repetido.
-- Ações auditadas de inclusão, edição e exclusão em lote na tela de Log, respeitando capacidades por provedor.
+- Cold start com cache **persistente** de análises do workspace e confirmações (não apenas resumos dos snapshots). Revalida automaticamente sempre que o logbook ou a versão mudar.
+- Abre a interface e carrega informações básicas das fontes antes de iniciar correlação pesada.
+- Atualização individual em segundo plano com progresso das páginas WRL.
+- WRL tenta receber até 250 registros por página e recua para 100 quando o servidor rejeita. A velocidade continua sujeita ao provedor.
+- Primeira carga WRL alternativa: em World Radio League, exporte **todo** o logbook como ADIF; em QSO Manager, vá a **Fontes → World Radio League → Importar ADIF completo**. A cópia é local, não altera o log remoto e mantém backup anterior.
+- Para segurança, registros WRL importados sem ID remoto não podem ser editados ou excluídos via API até uma leitura que forneça IDs estáveis.
+- Preserva CRUD auditado da v1.0.8 e os mecanismos de proteção contra duplicidades.
 
 ## O que o produto faz
 
