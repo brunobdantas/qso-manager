@@ -264,12 +264,28 @@ class IntegrityService:
             has_qrz = "QRZ" in refs
             if has_qrz:
                 qrz = row["source_records"]["QRZ"]["record"]
-                for provider in full:
+                for provider in PROVIDERS:
+                    if provider not in full:
+                        continue
                     if provider not in refs:
                         counters[provider]["missing"] += 1
-                        can_add = bool(caps[provider].get("add"))
-                        can_add = can_add and not row["duplicate"] and not (errors.get(provider, {}).get("active") and errors[provider]["classification"] in {"AUTH", "UNSUPPORTED"})
-                        case = self._case("MISSING", provider, row, reason="QSO do QRZ ausente neste snapshot completo",
+                        can_add = bool(caps[provider].get("add")) and not counters[provider]["stale"]
+                        can_add = can_add and not row["duplicate"] and not (errors.get(provider, {}).get("active") and errors[provider]["classification"] in {"AUTH", "UNSUPPORTED", "RATE_LIMIT"})
+                        nearby = False
+                        try:
+                            stamp = str(row.get("time") or "").replace(":", "").zfill(6)
+                            seconds = int(stamp[:2])*3600 + int(stamp[2:4])*60 + int(stamp[4:6])
+                            for possible in near_by_provider[provider].get((row["call"], row["date"], row["band"]), []):
+                                if (possible.seconds is not None and abs(possible.seconds-seconds) <= 300
+                                        and (possible.operating_mode or "") == (row["mode"] or "")):
+                                    nearby = True
+                                    break
+                        except (ValueError, TypeError):
+                            nearby = True
+                        can_add = can_add and not nearby
+                        reason = ("Contato semelhante em até 5 minutos no provedor; conferir horário antes de incluir"
+                                  if nearby else "QSO do QRZ ausente neste snapshot completo")
+                        case = self._case("MISSING", provider, row, reason=reason,
                                           confidence="HIGH" if can_add else "REVIEW", actionable=can_add)
                         cases.append(case)
                     else:
@@ -296,9 +312,7 @@ class IntegrityService:
         # Identify duplicate pairs within each provider. Different bands, modes and
         # distinct nearby QSOs are not merged by the established comparator.
         for provider in full:
-            snapshot = self.workspace.hub.snapshots.load(provider)
-            norm = self.workspace.comparator._normalize(snapshot.get("records") or [], provider)
-            groups = self.workspace.comparator._probable_duplicates(norm)
+            groups = self.workspace.comparator._probable_duplicates(normalized_by_provider[provider])
             for group in groups:
                 members = group.get("records") or []
                 if len(members) < 2:
@@ -338,8 +352,12 @@ class IntegrityService:
         for provider, metrics in counters.items():
             err = errors.get(provider, {})
             metrics["exception"] = err if err.get("active") else None
-            if not metrics["loaded"]:
+            if not reference_present:
+                metrics["state"] = "REFERENCE_MISSING"
+            elif not metrics["loaded"]:
                 metrics["state"] = "NO_COMPLETE_SNAPSHOT"
+            elif metrics["stale"]:
+                metrics["state"] = "STALE_SNAPSHOT"
             elif err.get("active"):
                 metrics["state"] = "PROVIDER_ERROR"
             elif all(metrics[x] == 0 for x in ("missing", "extra", "different", "duplicates")):
@@ -398,7 +416,7 @@ class IntegrityService:
             "total_candidates": len(candidates), "selected": len(ids),
             "logical_ids": ids, "sample": selected[:20],
             "blocked": state["blocked"],
-            "ready": bool(state["loaded"] and self.workspace._capabilities(provider).get("add")),
+            "ready": bool(state["loaded"] and not state["stale"] and self.workspace._capabilities(provider).get("add")),
             "policy": "Prévia obrigatória; somente inclusões de alta confiança, sem exclusões ou mudanças automáticas",
         }
 
