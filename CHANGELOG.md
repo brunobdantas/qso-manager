@@ -1,3 +1,16 @@
+## [1.0.9] - 2026-11-09
+
+### Cold start e atualização de fontes
+
+- Mantém em disco o resultado das análises do workspace e QSL (gzip), reaproveitando-o na abertura seguinte quando os snapshots estão iguais.
+- Invalida automaticamente o cache quando qualquer snapshot muda ou a versão do aplicativo é atualizada.
+- Abre a interface e o status das fontes antes de executar a análise pesada.
+- Permite atualizar uma fonte em segundo plano com progresso por página, sem bloquear a tela.
+- WRL tenta páginas maiores (250), recuando para 100 quando a API rejeitar a solicitação; a paginação por cursor permanece sequencial.
+- Oferece importação do ADIF completo exportado do WRL, evitando centenas de chamadas à API na carga inicial.
+- ADIF WRL inválido não substitui o snapshot e registros sem ID remoto são bloqueados para alterações/exclusões via API.
+- Testes de regressão para cache persistente, invalidação e ingestão WRL.
+
 ## [1.0.8] - 2026-11-09
 
 ### Desempenho e gestão remota

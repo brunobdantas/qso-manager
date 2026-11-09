@@ -5,16 +5,19 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.0.8** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.0.9** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.0.8. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.0.9. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
 
-## Melhorias v1.0.8
+## Melhorias v1.0.9
 
-- Abertura não bloqueante: navegação disponível enquanto a reconciliação/QSL é calculada.
-- Resumos persistentes dos snapshots para acelerar abertura e consulta de status.
-- World Radio League: progresso por página/registro, retentativas seguras e detecção de cursor repetido.
-- Ações auditadas de inclusão, edição e exclusão em lote na tela de Log, respeitando capacidades por provedor.
+- Cold start com cache **persistente** de análises do workspace e confirmações (não apenas resumos dos snapshots). Revalida automaticamente sempre que o logbook ou a versão mudar.
+- Abre a interface e carrega informações básicas das fontes antes de iniciar correlação pesada.
+- Atualização individual em segundo plano com progresso das páginas WRL.
+- WRL tenta receber até 250 registros por página e recua para 100 quando o servidor rejeita. A velocidade continua sujeita ao provedor.
+- Primeira carga WRL alternativa: em World Radio League, exporte **todo** o logbook como ADIF; em QSO Manager, vá a **Fontes → World Radio League → Importar ADIF completo**. A cópia é local, não altera o log remoto e mantém backup anterior.
+- Para segurança, registros WRL importados sem ID remoto não podem ser editados ou excluídos via API até uma leitura que forneça IDs estáveis.
+- Preserva CRUD auditado da v1.0.8 e os mecanismos de proteção contra duplicidades.
 
 ## O que o produto faz
 
@@ -59,7 +62,7 @@ Cada snapshot só é substituído depois que o download daquela fonte termina e 
 
 ## LoTW completo e incremental
 
-Na primeira atualização após instalar a v1.0.8, o LoTW migra o snapshot antigo de confirmações para o **log completo de QSOs aceitos**. Nas atualizações seguintes, o QSO Manager usa os marcadores `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL` para consultar somente QSOs/QSLs novos ou atualizados. O snapshot local continua completo; somente o tráfego remoto passa a ser incremental.
+Na primeira atualização após instalar a v1.0.9, o LoTW migra o snapshot antigo de confirmações para o **log completo de QSOs aceitos**. Nas atualizações seguintes, o QSO Manager usa os marcadores `APP_LoTW_LASTQSORX` e `APP_LoTW_LASTQSL` para consultar somente QSOs/QSLs novos ou atualizados. O snapshot local continua completo; somente o tráfego remoto passa a ser incremental.
 
 ## eQSL → QRZ
 
@@ -128,7 +131,7 @@ Consulte [SECURITY.md](SECURITY.md) antes de reportar qualquer problema envolven
 O artefato de produção é:
 
 ```text
-PU2BRU-QSO-Manager-Setup-v1.0.8.exe
+PU2BRU-QSO-Manager-Setup-v1.0.9.exe
 ```
 
 Ele é gerado pelo workflow **Build · Windows Installer** e inclui o runtime necessário. Não é necessário instalar Python, Node.js ou npm.
@@ -137,7 +140,7 @@ A atualização/reinstalação do programa não remove os dados persistentes do 
 
 ### SmartScreen
 
-A v1.0.8 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
+A v1.0.9 ainda não possui assinatura digital de code signing. O Windows pode exibir **Editor desconhecido**. Use somente o instalador produzido pelo workflow oficial deste repositório e valide sua origem antes da execução.
 
 ## Desenvolvimento
 
@@ -171,7 +174,7 @@ npm run build
 
 ## Qualidade e release gates
 
-A v1.0.8 exige, no CI:
+A v1.0.9 exige, no CI:
 
 - suíte de acceptance imutável;
 - regressão completa do backend;
@@ -211,7 +214,7 @@ Mais detalhes: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Escopo de plataforma
 
-| Plataforma | Estado v1.0.8 |
+| Plataforma | Estado v1.0.9 |
 | --- | --- |
 | Windows 11 | **Produção** |
 | Android | **Preview / companion** |

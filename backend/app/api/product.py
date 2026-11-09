@@ -162,6 +162,11 @@ def sync_all():
     return _run(lambda: V9ProductService().sync_all())
 
 
+@router.post("/sync/{provider}/start")
+def sync_one_start(provider: str):
+    return _run(lambda: parallel_sync.start([provider]))
+
+
 @router.post("/sync-all/start")
 def sync_all_start():
     return _run(parallel_sync.start)

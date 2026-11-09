@@ -6,12 +6,16 @@ all participate in the same logical-QSO workspace.
 """
 from __future__ import annotations
 
+import logging
+import time
+
 from typing import Any, Dict, Optional
 
 from ..adapters.cloud_logs import CloudProviderError
 from ..adif.parser import ADIFParser
 from ..core.version import __version__
 from .eqsl_qrz_sync_service import EqslQrzSyncService
+from .bootstrap_cache_service import BootstrapCache
 from .qso_manager_workspace import QSOManagerWorkspace
 from .v8_online_service import V8OnlineService
 
@@ -113,8 +117,8 @@ class V9ProductService(V8OnlineService):
 
     def import_local_adif(self, provider: str, content: str, filename: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
-        if provider not in {"HRD", "HRDLOG"}:
-            raise CloudProviderError("Manual ADIF bootstrap is supported for HRD and HRDLOG")
+        if provider not in {"HRD", "HRDLOG", "WRL"}:
+            raise CloudProviderError("Manual ADIF is supported for HRD, HRDLOG and full WRL exports")
         if provider == "HRDLOG":
             return self.import_hrdlog_adif(content, filename)
         if not str(content or "").strip():
@@ -122,9 +126,15 @@ class V9ProductService(V8OnlineService):
         records, errors = ADIFParser().parse(content)
         if not records:
             raise CloudProviderError("Nenhum QSO válido foi encontrado no ADIF")
+        if provider == "WRL":
+            # Never replace the full local copy with a malformed export.
+            if errors:
+                raise CloudProviderError("ADIF do WRL com erros: " + "; ".join(errors[:3]))
+            if any(not all(record.get(k) for k in ("CALL", "QSO_DATE", "TIME_ON")) for record in records):
+                raise CloudProviderError("Exportação WRL incompleta: CALL, QSO_DATE ou TIME_ON ausente")
         backup = self.snapshots.backup(provider)
         summary = self.snapshots.save(provider, records, {
-            "source": "manual_adif",
+            "source": "manual_wrl_adif" if provider == "WRL" else "manual_adif",
             "coverage": "FULL_EXPORT",
             "filename": (filename or "ham-radio-deluxe.adi")[:255],
             "parse_errors": errors[:20],
@@ -162,29 +172,49 @@ class V9ProductService(V8OnlineService):
         return self._eqsl_qrz_service().apply(confirm=confirm, limit=limit)
 
     def bootstrap(self) -> Dict[str, Any]:
-        # Compute the expensive QSL correlation once. Previously dashboard(),
-        # issues() and bootstrap() each recalculated it (four analyses total).
+        """Use persistent read-only analysis cache when snapshots are unchanged.
+
+        This prevents full QRZ/LoTW reconciliation on every app relaunch.
+        Credential status is never loaded from the cache.
+        """
+        started = time.monotonic()
         status = self.status()
-        workspace = self._workspace().options()
-        qsl = self.qsl_analysis()
-        issues = self.issues(limit=50, qsl_result=qsl)
-        # Keep dashboard's response shape, but reuse startup results.
-        dashboard_issues = {**issues, "items": issues["items"][:20]}
-        dashboard = {
-            "version": self.VERSION,
-            "summary": workspace.get("summary") or {},
-            "issues": dashboard_issues,
-            "qsl_summary": qsl.get("summary") or {},
-            "sources": status["providers"],
-        }
-        return {
-            "version": self.VERSION,
-            "status": status,
-            "dashboard": dashboard,
-            "workspace": workspace,
-            "qsl": qsl,
-            "issues": issues,
-        }
+        cache = BootstrapCache(self.snapshots)
+        with cache._lock:
+            cached = cache.load()
+            if cached is not None:
+                logging.getLogger(__name__).info(
+                    "bootstrap: disk-cache hit in %.2fs", time.monotonic() - started
+                )
+                return {"version": self.VERSION, "status": status, **cached}
+
+            signature = cache.signature()
+            workspace = self._workspace().options()
+            after_workspace = time.monotonic()
+            qsl = self.qsl_analysis()
+            after_qsl = time.monotonic()
+            issues = self.issues(limit=50, qsl_result=qsl)
+            dashboard_issues = {**issues, "items": issues["items"][:20]}
+            dashboard = {
+                "version": self.VERSION,
+                "summary": workspace.get("summary") or {},
+                "issues": dashboard_issues,
+                "qsl_summary": qsl.get("summary") or {},
+                "sources": status["providers"],
+            }
+            payload = {
+                "dashboard": dashboard,
+                "workspace": workspace,
+                "qsl": qsl,
+                "issues": issues,
+            }
+            cache.save(payload, signature)
+            logging.getLogger(__name__).info(
+                "bootstrap: workspace %.2fs, qsl %.2fs, issues %.2fs, total %.2fs",
+                after_workspace-started, after_qsl-after_workspace,
+                time.monotonic()-after_qsl, time.monotonic()-started,
+            )
+            return {"version": self.VERSION, "status": status, **payload}
 
     def diagnostics(self) -> Dict[str, Any]:
         status = self.status()

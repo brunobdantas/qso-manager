@@ -237,6 +237,8 @@ class WRLCloudAdapter(CloudLogAdapter):
             if not response.is_success or payload.get("error"):
                 err = payload.get("error") or {}
                 message = err.get("message") if isinstance(err, dict) else str(err)
+                if method.upper() == "GET" and path == "/v1/contacts" and response.status_code in (400, 422):
+                    raise CloudProviderError("WRL_PAGE_SIZE_UNSUPPORTED: " + (message or str(response.status_code)))
                 raise CloudProviderError(message or f"WRL HTTP {response.status_code}")
             return payload
         raise CloudProviderError("WRL request retry budget exceeded")
@@ -291,13 +293,20 @@ class WRLCloudAdapter(CloudLogAdapter):
         pages = 0
         started = time.monotonic()
         requested_logbook = self.credentials.get("logbook_id")
+        page_size = 250  # Negotiate on first page, fall back to 100 on 400/422.
         while True:
-            params: Dict[str, Any] = {"limit": 100}
+            params: Dict[str, Any] = {"limit": page_size}
             if cursor:
                 params["cursor"] = cursor
             if requested_logbook:
                 params["logbookId"] = requested_logbook
-            payload = self._request("GET", "/v1/contacts", params=params)
+            try:
+                payload = self._request("GET", "/v1/contacts", params=params)
+            except CloudProviderError as exc:
+                if pages == 0 and page_size != 100 and "WRL_PAGE_SIZE_UNSUPPORTED" in str(exc):
+                    page_size = 100
+                    continue
+                raise
             contacts = payload.get("data") or []
             if not isinstance(contacts, list):
                 raise CloudProviderError("WRL contacts endpoint returned an invalid data collection")
@@ -318,6 +327,7 @@ class WRLCloudAdapter(CloudLogAdapter):
             "records": records,
             "metadata": {
                 "pages": pages, "coverage": "API_FULL_SYNC",
+                "page_size_requested": page_size,
                 "logbook_id": requested_logbook,
                 "duration_seconds": round(time.monotonic() - started, 2),
             },

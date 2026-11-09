@@ -526,6 +526,9 @@ class QSOManagerWorkspace:
                 elif target_name not in refs:
                     skipped += 1
                     item["status"] = "not_present"
+                elif not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
+                    unsupported += 1
+                    item["status"] = "stable_remote_id_missing"
                 elif not normalized_changes:
                     unsupported += 1
                     item["status"] = "no_changes"
@@ -539,6 +542,9 @@ class QSOManagerWorkspace:
                 elif target_name not in refs:
                     skipped += 1
                     item["status"] = "not_present"
+                elif target_name == "WRL" and not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
+                    unsupported += 1
+                    item["status"] = "stable_remote_id_missing"
                 else:
                     actionable += 1
                     item["status"] = "ready"
