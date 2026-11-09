@@ -315,7 +315,7 @@ class IntegrityService:
                     if provider not in refs:
                         counters[provider]["missing"] += 1
                         can_add = bool(caps[provider].get("add")) and not counters[provider]["stale"]
-                        can_add = can_add and not row["duplicate"] and not (errors.get(provider, {}).get("active") and errors[provider]["classification"] in {"AUTH", "UNSUPPORTED", "RATE_LIMIT"})
+                        can_add = can_add and not row["duplicate"] and not errors.get(provider, {}).get("active")
                         nearby = False
                         try:
                             stamp = str(row.get("time") or "").replace(":", "").zfill(6)
