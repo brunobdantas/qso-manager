@@ -1,3 +1,15 @@
+## [1.0.8] - 2026-11-09
+
+### Desempenho e gestão remota
+
+- interface utilizável antes da reconciliação completa; execução da análise em segundo plano;
+- cache persistente e validado dos resumos dos snapshots, sem carregar todas as linhas em chamadas de status;
+- WRL com medição de páginas/contatos, retentativas apenas para GET e proteção de cursor;
+- interface para simular e executar inclusão, atualização e exclusão de QSOs conforme capacidade da API;
+- bloqueio de publicação automática de duplicidades prováveis; status por registro em operações em lote;
+- atualizações em lote com falha parcial explícita e sem exclusão implícita da origem;
+- testes de regressão para cache de snapshots e paginação do WRL.
+
 # Changelog
 
 ## [1.0.7] - 2026-09-30

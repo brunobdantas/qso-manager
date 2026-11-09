@@ -105,11 +105,11 @@ class V9ProductService(V8OnlineService):
             }
         return super().test(provider)
 
-    def sync(self, provider: str) -> Dict[str, Any]:
+    def sync(self, provider: str, progress=None) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)
         if provider == "HRD":
             raise CloudProviderError("HRD local is refreshed by importing a new ADIF export")
-        return super().sync(provider)
+        return super().sync(provider, progress=progress)
 
     def import_local_adif(self, provider: str, content: str, filename: str) -> Dict[str, Any]:
         provider = self._normalize_provider(provider)

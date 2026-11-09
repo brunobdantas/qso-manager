@@ -17,13 +17,13 @@ def test_summary_cache_reuses_json_and_detects_replacement(tmp_path, monkeypatch
 
     store.save("QRZ", [{"CALL": "K1ABC"}], {"coverage": "API_FULL_SYNC"})
     assert store.summary("QRZ")["records"] == 1
-    # One load after the save; repeated requests must not reparse the JSON.
-    assert len(calls) == 2
+    # New saves publish their summaries without reparsing the large JSON.
+    assert len(calls) == 1
     store._path("QRZ").write_text(
         '{"provider":"QRZ","downloaded_at":"new","records":[{},{}],"metadata":{}}',
         encoding="utf-8",
     )
     assert store.summary("QRZ")["records"] == 2
-    assert len(calls) == 3
+    assert len(calls) == 2
     store.clear("QRZ")
     assert store.summary("QRZ")["records"] == 0

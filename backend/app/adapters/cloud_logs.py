@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import html
 import re
+import time
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
 from typing import Any, Dict, Iterable, List, Optional
@@ -209,17 +210,36 @@ class WRLCloudAdapter(CloudLogAdapter):
         return {"Authorization": f"Bearer {key}", "User-Agent": f"PU2BRU-QSO-Manager/{__version__}"}
 
     def _request(self, method: str, path: str, **kwargs: Any) -> Dict[str, Any]:
-        response = self.client.request(method, self.base_url + path, headers=self._headers(), **kwargs)
-        if response.status_code == 429:
-            raise CloudProviderError(f"WRL rate limit reached; retry after {response.headers.get('Retry-After', '?')} seconds")
-        try:
-            payload = response.json()
-        except ValueError as exc:
-            raise CloudProviderError(f"WRL returned non-JSON response ({response.status_code})") from exc
-        if not response.is_success or payload.get("error"):
-            err = payload.get("error") or {}
-            raise CloudProviderError(err.get("message") or f"WRL HTTP {response.status_code}")
-        return payload
+        # Read requests can retry safely. Never replay POST/PATCH/DELETE automatically.
+        attempts = 4 if method.upper() == "GET" else 1
+        for attempt in range(attempts):
+            try:
+                response = self.client.request(method, self.base_url + path, headers=self._headers(), **kwargs)
+            except (httpx.TimeoutException, httpx.TransportError):
+                if attempt + 1 >= attempts:
+                    raise
+                time.sleep(min(2 ** attempt, 8))
+                continue
+            if response.status_code in {429, 500, 502, 503, 504} and attempt + 1 < attempts:
+                retry_after = response.headers.get("Retry-After", "")
+                try:
+                    delay = min(max(float(retry_after), 0), 30)
+                except ValueError:
+                    delay = min(2 ** attempt, 8)
+                time.sleep(delay)
+                continue
+            if response.status_code == 429:
+                raise CloudProviderError("WRL rate limit reached; retry after " + response.headers.get("Retry-After", "?") + " seconds")
+            try:
+                payload = response.json()
+            except ValueError as exc:
+                raise CloudProviderError(f"WRL returned non-JSON response ({response.status_code})") from exc
+            if not response.is_success or payload.get("error"):
+                err = payload.get("error") or {}
+                message = err.get("message") if isinstance(err, dict) else str(err)
+                raise CloudProviderError(message or f"WRL HTTP {response.status_code}")
+            return payload
+        raise CloudProviderError("WRL request retry budget exceeded")
 
     def test_connection(self) -> Dict[str, Any]:
         payload = self._request("GET", "/v1/me")
@@ -262,10 +282,14 @@ class WRLCloudAdapter(CloudLogAdapter):
         }
         return {k: v for k, v in record.items() if v is not None and v != ""}
 
-    def fetch_all(self) -> Dict[str, Any]:
+    def fetch_all(self, progress_callback=None) -> Dict[str, Any]:
+        # Cursor pagination must remain sequential. Track progress and detect repeated
+        # cursors instead of silently producing a partial or endless full sync.
         records: List[Dict[str, Any]] = []
         cursor: Optional[str] = None
+        seen_cursors = set()
         pages = 0
+        started = time.monotonic()
         requested_logbook = self.credentials.get("logbook_id")
         while True:
             params: Dict[str, Any] = {"limit": 100}
@@ -275,14 +299,29 @@ class WRLCloudAdapter(CloudLogAdapter):
                 params["logbookId"] = requested_logbook
             payload = self._request("GET", "/v1/contacts", params=params)
             contacts = payload.get("data") or []
+            if not isinstance(contacts, list):
+                raise CloudProviderError("WRL contacts endpoint returned an invalid data collection")
             records.extend(self._to_record(c) for c in contacts)
             pages += 1
-            cursor = (payload.get("meta") or {}).get("nextCursor")
-            if not cursor:
+            if progress_callback is not None:
+                progress_callback(pages, len(records), round(time.monotonic() - started, 2))
+            next_cursor = (payload.get("meta") or {}).get("nextCursor")
+            if not next_cursor:
                 break
+            if next_cursor == cursor or next_cursor in seen_cursors:
+                raise CloudProviderError("WRL pagination repeated a cursor; previous snapshot was preserved")
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
             if pages > 10000:
                 raise CloudProviderError("WRL paging safety limit reached")
-        return {"records": records, "metadata": {"pages": pages, "coverage": "API_FULL_SYNC", "logbook_id": requested_logbook}}
+        return {
+            "records": records,
+            "metadata": {
+                "pages": pages, "coverage": "API_FULL_SYNC",
+                "logbook_id": requested_logbook,
+                "duration_seconds": round(time.monotonic() - started, 2),
+            },
+        }
 
     @staticmethod
     def _create_payload(record: Dict[str, Any], logbook_id: Optional[str] = None) -> Dict[str, Any]:
