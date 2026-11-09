@@ -59,6 +59,7 @@ def qsl_dxcc(limit: int = Query(100, ge=1, le=1000)):
 def history(limit: int = Query(100, ge=1, le=500)):
     return _run(lambda: {
         "decisions": IntegrityStore().history(limit),
+        "corrections": IntegrityStore().corrections(limit),
         "scans": IntegrityStore().scans(25),
         "actions": QSOManagerActivityStore().list(limit=limit),
         "provider_errors": IntegrityStore().errors(),
