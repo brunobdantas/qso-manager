@@ -125,6 +125,15 @@ class QSOManagerBulkJobManager:
         circuit_open = set()
         errors: List[Dict[str, Any]] = []
         results: List[Dict[str, Any]] = []
+        audit_pending: List[Dict[str, Any]] = []
+
+        def flush_audit() -> None:
+            if audit_pending:
+                try:
+                    IntegrityStore().record_corrections(audit_pending)
+                    audit_pending.clear()
+                except Exception:
+                    pass
 
         try:
             hub = CloudHubService()
@@ -212,10 +221,21 @@ class QSOManagerBulkJobManager:
                             raise RuntimeError("Remote provider rejected the operation")
                         succeeded += 1
                     results.append({"logical_id": logical_id, "result": result})
+                    audit_pending.append({
+                        "job_id": job_id, "logical_id": logical_id, "provider": target or source or "",
+                        "action": action, "status": "API_ACCEPTED" if actionable else "SKIPPED",
+                        "detail": {"reason": result.get("reason", ""),
+                                   "verification": "remote_recheck_pending" if actionable else "not_sent"},
+                    })
                 except Exception as exc:
                     failed += 1
                     kind = _failure_type(str(exc))
                     errors.append({"logical_id": logical_id, "provider": target, "type": kind, "error": str(exc)})
+                    audit_pending.append({
+                        "job_id": job_id, "logical_id": logical_id, "provider": target or source or "",
+                        "action": action, "status": "ERROR",
+                        "detail": {"type": kind, "error": str(exc)[:400]},
+                    })
                     if target and kind in {"AUTH", "UNSUPPORTED", "RATE_LIMIT"}:
                         circuit_open.add(target)
                     try:
@@ -224,6 +244,8 @@ class QSOManagerBulkJobManager:
                         pass
 
                 processed += 1
+                if len(audit_pending) >= 50:
+                    flush_audit()
                 pct = min(88, 4 + round((processed / max(len(logical_ids), 1)) * 84))
                 cls._set(
                     job_id,
@@ -236,6 +258,7 @@ class QSOManagerBulkJobManager:
                     results=results[-100:],
                 )
 
+            flush_audit()
             if modified_providers:
                 cls._set(job_id, phase="resync", progress=90, message="Atualizando snapshots das plataformas alteradas…")
                 for provider in sorted(modified_providers):
@@ -269,6 +292,7 @@ class QSOManagerBulkJobManager:
                 status="OK" if failed == 0 else "PARTIAL",
             )
         except Exception as exc:
+            flush_audit()
             cls._set(
                 job_id,
                 status="failed",
