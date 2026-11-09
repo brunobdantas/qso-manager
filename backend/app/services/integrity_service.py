@@ -12,7 +12,7 @@ import sqlite3
 import threading
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -230,12 +230,33 @@ class IntegrityService:
                 summaries[p].get("downloaded_at") is not None and
                 (summaries[p].get("metadata") or {}).get("coverage") in FULL_COVERAGE}
         caps = {p: self.workspace._capabilities(p) for p in PROVIDERS}
+        normalized_by_provider = {}
+        near_by_provider = {}
+        for p in full:
+            records = self.workspace.hub.snapshots.load(p).get("records") or []
+            norm = self.workspace.comparator._normalize(records, p)
+            normalized_by_provider[p] = norm
+            by_key = defaultdict(list)
+            for q in norm:
+                by_key[(q.call, q.date, q.band)].append(q)
+            near_by_provider[p] = by_key
+        reference_present = summaries["QRZ"].get("downloaded_at") is not None
+        fresh_cutoff = datetime.now(timezone.utc) - timedelta(hours=48)
+        def is_stale(timestamp):
+            if not timestamp:
+                return True
+            try:
+                stamp = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+                return stamp.tzinfo is None or stamp < fresh_cutoff
+            except ValueError:
+                return True
         errors = self.store.errors()
         decisions = self.store.decisions()
         counters = {p: {"records": summaries[p].get("records") or 0,
                         "matched": 0, "missing": 0, "extra": 0,
                         "different": 0, "duplicates": 0, "blocked": 0,
                         "loaded": p in full, "coverage": (summaries[p].get("metadata") or {}).get("coverage"),
+                        "stale": is_stale(summaries[p].get("downloaded_at")) or is_stale(summaries["QRZ"].get("downloaded_at")),
                         "last_update": summaries[p].get("downloaded_at")} for p in PROVIDERS}
         cases = []
         for row in rows:
