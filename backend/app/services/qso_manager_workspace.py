@@ -28,7 +28,9 @@ class QSOManagerWorkspace:
     )
     DIFFERENCE_FIELDS = (
         "RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY",
-        "NAME", "QTH", "COMMENT", "QSL_SENT", "QSL_RCVD",
+        "NAME", "QTH", "COMMENT",
+        # QSL flags have provider-specific channels (paper vs eQSL vs LoTW);
+        # compare them through QSL evidence instead of falsely reporting conflicts.
     )
     _cache_lock = threading.RLock()
     _cache_signature: Optional[Tuple[Any, ...]] = None
@@ -131,6 +133,15 @@ class QSOManagerWorkspace:
                 if value not in (None, ""):
                     values.add(self._upper(value))
             if len(values) > 1:
+                if field == "GRIDSQUARE":
+                    # GF05 is a valid coarse locator for GF05TG; differing
+                    # precision is not an actual geographic disagreement.
+                    locators = list(values)
+                    if all(len(v) >= 4 and len(v) % 2 == 0 for v in locators) and all(
+                        a.startswith(b) or b.startswith(a)
+                        for i, a in enumerate(locators) for b in locators[i + 1:]
+                    ):
+                        continue
                 differences.append(field)
         return differences
 
