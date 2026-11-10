@@ -82,6 +82,10 @@ def main() -> int:
     qrz = read("backend/app/adapters/qrz_cloud_v501.py")
     require('OPTION="REPLACE"' in qrz, "audited QRZ replacement path missing")
     require("protected_fields" in qrz and "expected_fields" in qrz, "QRZ replace must enforce protected fields and live preconditions")
+    require("DELETE" in qrz and "LOGIDS" in qrz, "QRZ exact delete path missing")
+    hrdlog = read("backend/app/adapters/hrdlog.py")
+    for marker in ("ADIFKey", "ADIFData", '"UPDATE"', '"DELETE"'):
+        require(marker in hrdlog, f"HRDLog CRUD marker missing: {marker}")
 
     required_docs = (
         "README.md",

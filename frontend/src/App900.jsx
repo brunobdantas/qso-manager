@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react'
 
-const VERSION = '1.1.2'
+const VERSION = '1.1.3'
 const NAV = [
   ['overview','Visão geral','⌂'],
   ['log','Log','◎'],
@@ -70,19 +70,33 @@ function Overview({boot,navigate,syncAll,busy,syncJob}){
 }
 
 
-function BulkActionDialog({ids,onClose,onDone}){
+function BulkActionDialog({ids,workspace,onClose,onDone}){
   const [action,setAction]=useState('PUBLISH'),[target,setTarget]=useState('WRL')
   const [field,setField]=useState('COMMENT'),[value,setValue]=useState('')
-  const [plan,setPlan]=useState(null),[job,setJob]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState('')
+  const [plan,setPlan]=useState(null),[job,setJob]=useState(null),[busy,setBusy]=useState(false),[message,setMessage]=useState(''),[deleteText,setDeleteText]=useState(''),[remoteOptions,setRemoteOptions]=useState(null)
   const labels={PUBLISH:'Adicionar ausentes',UPDATE:'Editar registros',DELETE:'Excluir registros'}
+  const activeWorkspace=workspace||remoteOptions||{}
+  const capability=activeWorkspace.capability_matrix||{}
+  const actionKey={PUBLISH:'add',UPDATE:'update',DELETE:'delete'}[action]
+  const targetOptions=(activeWorkspace.write_targets||['QRZ','WRL','CLUBLOG','EQSL','HRDLOG']).filter(p=>capability[p]?.[actionKey])
+  const targetCaps=capability[target]||{}
+  const allowedFields=targetCaps.update_fields||[]
+  const statusLabel=s=>({unsupported:'operação indisponível',not_present:'não existe no destino',already_present:'já existe no destino',duplicate_review_required:'duplicidade exige revisão',stable_remote_id_missing:'ID remoto ausente',no_changes:'informe uma alteração',provider_batch_limit:'limite seguro da plataforma'}[s]||String(s||'').replace('unsupported_fields:','campos não suportados: '))
   const payload=()=>({action,logical_ids:ids,target,changes:action==='UPDATE'?{[field]:value}:{}})
+  useEffect(()=>{if(!workspace)api('/api/qso-manager/options').then(setRemoteOptions).catch(e=>setMessage('Erro: '+e.message))},[workspace])
+  useEffect(()=>{
+    if(targetOptions.length&&!targetOptions.includes(target)){setTarget(targetOptions[0]);setPlan(null)}
+  },[action,targetOptions.join('|')])
+  useEffect(()=>{
+    if(action==='UPDATE'&&allowedFields.length&&!allowedFields.includes(field)){setField(allowedFields[0]);setPlan(null)}
+  },[target,action,allowedFields.join('|')])
   async function preview(){
     setBusy(true);setPlan(null);setMessage('')
     try{setPlan(await api('/api/qso-manager/bulk/preview',{method:'POST',body:JSON.stringify(payload())}))}
     catch(e){setMessage('Erro na prévia: '+e.message)}finally{setBusy(false)}
   }
   async function execute(){
-    if(!plan?.actionable||busy)return
+    if(!plan?.actionable||busy||(action==='DELETE'&&deleteText!=='EXCLUIR'))return
     if(!window.confirm('Confirmar '+action+' em '+plan.actionable+' QSO(s) na plataforma '+target+'? Esta ação modifica dados remotos.'))return
     setBusy(true);setMessage('Executando, sem fechar esta janela…')
     try{
@@ -94,24 +108,27 @@ function BulkActionDialog({ids,onClose,onDone}){
         setJob(state)
         if(['succeeded','failed','completed_with_errors'].includes(state.status))break
       }
-      setMessage((state.message||state.status||'')+' Atualize os snapshots para conferir o resultado.')
+      setMessage((state.message||state.status||'')+' Os snapshots gerenciados foram atualizados para conferência.')
       onDone()
     }catch(e){setMessage('Erro: '+e.message)}finally{setBusy(false)}
   }
-  function changeAction(v){setAction(v);setPlan(null);setMessage('')}
+  function changeAction(v){setAction(v);setPlan(null);setMessage('');setDeleteText('')}
   return <div className="u-modal-bg"><div className="u-modal" style={{maxWidth:650}}>
     <div className="u-modal-title"><div><small>OPERAÇÕES REMOTAS AUDITADAS</small><h2>Gerenciar {fmt(ids.length)} QSO(s)</h2></div><button disabled={busy} onClick={onClose}>×</button></div>
     <Notice>QRZ é a referência. Operações só serão executadas em plataformas e registros compatíveis, com prévia obrigatória.</Notice>
     <div className="u-fields">
       <label><span>Operação</span><select value={action} disabled={busy} onChange={e=>changeAction(e.target.value)}>{Object.entries(labels).map(([k,v])=><option key={k} value={k}>{v}</option>)}</select></label>
-      <label><span>Plataforma de destino</span><select value={target} disabled={busy} onChange={e=>{setTarget(e.target.value);setPlan(null)}}>{['WRL','CLUBLOG','EQSL','QRZ'].map(p=><option key={p}>{p}</option>)}</select></label>
-      {action==='UPDATE'&&<><label><span>Campo</span><select value={field} onChange={e=>{setField(e.target.value);setPlan(null)}}>{['COMMENT','RST_SENT','RST_RCVD','GRIDSQUARE','NAME','QTH','STATE','FREQ','MODE'].map(x=><option key={x}>{x}</option>)}</select></label><label><span>Novo valor</span><input value={value} onChange={e=>{setValue(e.target.value);setPlan(null)}} placeholder="Informe o novo valor"/></label></>}
+      <label><span>Plataforma de destino</span><select value={target} disabled={busy} onChange={e=>{setTarget(e.target.value);setPlan(null);setDeleteText('')}}>{targetOptions.map(p=><option key={p}>{p}</option>)}</select></label>
+      {action==='UPDATE'&&<><label><span>Campo permitido</span><select value={field} onChange={e=>{setField(e.target.value);setPlan(null)}}>{allowedFields.map(x=><option key={x}>{x}</option>)}</select></label><label><span>Novo valor</span><input value={value} onChange={e=>{setValue(e.target.value);setPlan(null)}} placeholder="Deixe vazio para limpar o campo"/></label></>}
     </div>
+    <div className="u-source-tags"><Badge tone={targetCaps.read?'ok':'neutral'}>{targetCaps.read?'ler por API':'sem leitura API'}</Badge><Badge tone={targetCaps.add?'ok':'neutral'}>criar</Badge><Badge tone={targetCaps.update?'ok':'neutral'}>editar</Badge><Badge tone={targetCaps.delete?'ok':'neutral'}>excluir</Badge>{targetCaps.max_batch&&<Badge>lote máx. {fmt(targetCaps.max_batch)}</Badge>}</div>
+    {(targetCaps.update_note||targetCaps.read_note)&&<Notice>{targetCaps.update_note||targetCaps.read_note}</Notice>}
+    {action==='DELETE'&&<label className="u-danger-confirm"><span>Exclusão remota é permanente. Digite <b>EXCLUIR</b> para liberar a execução.</span><input value={deleteText} disabled={busy} onChange={e=>setDeleteText(e.target.value.toUpperCase())} placeholder="EXCLUIR"/></label>}
     {ids.length>10000&&<Notice tone="warn">Limite de 10.000 QSOs por lote. Reduza a seleção.</Notice>}
-    {plan&&<Notice tone={plan.actionable?'info':'warn'}>{fmt(plan.actionable)} prontos · {fmt(plan.skipped)} ignorados · {fmt(plan.unsupported)} não suportados. {plan.sample?.filter(x=>x.status!=='ready').slice(0,3).map(x=>x.call+': '+x.status).join(' · ')}</Notice>}
+    {plan&&<Notice tone={plan.actionable?'info':'warn'}>{fmt(plan.actionable)} prontos · {fmt(plan.skipped)} ignorados · {fmt(plan.unsupported)} não suportados. {plan.sample?.filter(x=>x.status!=='ready').slice(0,3).map(x=>x.call+': '+statusLabel(x.status)).join(' · ')}</Notice>}
     {job&&<Notice>{fmt(job.processed)} processados · {fmt(job.succeeded)} concluídos · {fmt(job.failed)} erros · {job.phase}</Notice>}
     {message&&<Notice tone={message.startsWith('Erro')?'error':'info'}>{message}</Notice>}
-    <div className="u-modal-actions"><Button kind="secondary" disabled={busy} onClick={onClose}>Fechar</Button><div><Button kind="secondary" disabled={busy||ids.length>10000} onClick={preview}>1. Simular</Button><Button disabled={busy||!plan?.actionable||ids.length>10000} onClick={execute}>2. Executar ({fmt(plan?.actionable)})</Button></div></div>
+    <div className="u-modal-actions"><Button kind="secondary" disabled={busy} onClick={onClose}>Fechar</Button><div><Button kind="secondary" disabled={busy||ids.length>10000||!targetOptions.length} onClick={preview}>1. Simular</Button><Button disabled={busy||!plan?.actionable||ids.length>10000||(action==='DELETE'&&deleteText!=='EXCLUIR')} onClick={execute}>2. Executar ({fmt(plan?.actionable)})</Button></div></div>
   </div></div>
 }
 

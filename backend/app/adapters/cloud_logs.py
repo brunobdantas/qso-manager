@@ -64,7 +64,7 @@ def records_to_adif(records: Iterable[Dict[str, Any]], program_id: str = "PU2BRU
 
 class CloudLogAdapter(ABC):
     provider: str
-    capabilities: Dict[str, bool]
+    capabilities: Dict[str, Any]
 
     def __init__(self, credentials: Dict[str, Any], client: Optional[httpx.Client] = None) -> None:
         self.credentials = credentials
@@ -83,8 +83,8 @@ class CloudLogAdapter(ABC):
         """
         try:
             return httpx.Client(timeout=60.0, follow_redirects=True)
-        except ValueError as exc:
-            if "Unknown scheme for proxy URL" not in str(exc):
+        except (ValueError, ImportError) as exc:
+            if not any(token in str(exc) for token in ("Unknown scheme for proxy URL", "SOCKS proxy", "socksio")):
                 raise
             return httpx.Client(timeout=60.0, follow_redirects=True, trust_env=False)
 
@@ -107,7 +107,12 @@ class CloudLogAdapter(ABC):
     def add_qso(self, record: Dict[str, Any]) -> Dict[str, Any]:
         raise CloudProviderError(f"{self.provider} does not support add through this adapter")
 
-    def update_qso(self, external_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+    def update_qso(
+        self,
+        external_id: str,
+        changes: Dict[str, Any],
+        record: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         raise CloudProviderError(f"{self.provider} does not support update through this adapter")
 
     def delete_qso(self, external_id: str, record: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -201,7 +206,17 @@ class QRZCloudAdapter(CloudLogAdapter):
 class WRLCloudAdapter(CloudLogAdapter):
     provider = "WRL"
     base_url = "https://api.worldradioleague.com"
-    capabilities = {"read": True, "add": True, "update": True, "delete": True}
+    capabilities = {
+        "read": True, "add": True, "update": True, "delete": True,
+        "update_fields": [
+            "CALL", "FREQ", "BAND", "MODE", "SUBMODE", "RST_SENT", "RST_RCVD",
+            "COMMENT", "STATION_CALLSIGN", "MY_GRIDSQUARE", "NAME", "GRIDSQUARE",
+            "QTH", "STATE", "OPERATOR",
+        ],
+        "requires_external_id": True,
+        "write_mode": "official_rest_crud",
+        "max_batch": 10000,
+    }
 
     def _headers(self) -> Dict[str, str]:
         key = str(self.credentials.get("api_key") or "").strip()
@@ -230,10 +245,13 @@ class WRLCloudAdapter(CloudLogAdapter):
                 continue
             if response.status_code == 429:
                 raise CloudProviderError("WRL rate limit reached; retry after " + response.headers.get("Retry-After", "?") + " seconds")
-            try:
-                payload = response.json()
-            except ValueError as exc:
-                raise CloudProviderError(f"WRL returned non-JSON response ({response.status_code})") from exc
+            if response.status_code == 204 or not response.content:
+                payload = {"data": None, "meta": {}, "error": None}
+            else:
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    raise CloudProviderError(f"WRL returned non-JSON response ({response.status_code})") from exc
             if not response.is_success or payload.get("error"):
                 err = payload.get("error") or {}
                 message = err.get("message") if isinstance(err, dict) else str(err)
@@ -334,9 +352,13 @@ class WRLCloudAdapter(CloudLogAdapter):
         }
 
     @staticmethod
-    def _create_payload(record: Dict[str, Any], logbook_id: Optional[str] = None) -> Dict[str, Any]:
+    def _create_payload(
+        record: Dict[str, Any],
+        logbook_id: Optional[str] = None,
+        default_callsign: Optional[str] = None,
+    ) -> Dict[str, Any]:
         qso_date = str(record.get("QSO_DATE") or "").replace("-", "")
-        time_on = str(record.get("TIME_ON") or "").replace(":", "")
+        time_on = str(record.get("TIME_ON") or "").replace(":", "")[:6].ljust(6, "0")
         freq = record.get("FREQ")
         band = record.get("BAND")
         mode = record.get("SUBMODE") or record.get("MODE")
@@ -344,7 +366,9 @@ class WRLCloudAdapter(CloudLogAdapter):
             raise CloudProviderError("WRL add requires CALL, QSO_DATE, TIME_ON, FREQ, BAND and MODE/SUBMODE")
         payload: Dict[str, Any] = {
             "programId": "PU2BRU-QSO-Manager", "call": record["CALL"],
-            "timestamp": {"qsoDate": qso_date, "timeOn": time_on[:6]},
+            # WRL's OpenAPI contract uses one ISO-8601 UTC timestamp, not the
+            # legacy qsoDate/timeOn object accepted by some early clients.
+            "timestamp": f"{qso_date[:4]}-{qso_date[4:6]}-{qso_date[6:8]}T{time_on[:2]}:{time_on[2:4]}:{time_on[4:6]}Z",
             "freq": float(freq), "band": band, "mode": mode,
         }
         mapping = {
@@ -355,17 +379,28 @@ class WRLCloudAdapter(CloudLogAdapter):
         for source, target in mapping.items():
             if record.get(source) not in (None, ""):
                 payload[target] = str(record[source])
+        if not payload.get("stationCallsign") and default_callsign:
+            payload["stationCallsign"] = str(default_callsign).strip().upper()
         if logbook_id:
             payload["logbookId"] = logbook_id
         return payload
 
     def add_qso(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        payload = self._create_payload(record, self.credentials.get("logbook_id"))
+        payload = self._create_payload(
+            record,
+            self.credentials.get("logbook_id"),
+            self.credentials.get("callsign"),
+        )
         result = self._request("POST", "/v1/contacts", json=payload)
         data = result.get("data") or {}
         return {"ok": True, "external_id": data.get("id"), "data": data, "meta": result.get("meta")}
 
-    def update_qso(self, external_id: str, changes: Dict[str, Any]) -> Dict[str, Any]:
+    def update_qso(
+        self,
+        external_id: str,
+        changes: Dict[str, Any],
+        record: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         if not external_id:
             raise CloudProviderError("WRL contact id is required for update")
         mapping = {
@@ -394,7 +429,15 @@ class WRLCloudAdapter(CloudLogAdapter):
 
 class ClubLogCloudAdapter(CloudLogAdapter):
     provider = "CLUBLOG"
-    capabilities = {"read": True, "add": True, "update": False, "delete": True}
+    capabilities = {
+        "read": True, "add": True, "update": True, "delete": True,
+        "update_fields": ["CALL"],
+        "requires_external_id": False,
+        "requires_snapshot_record": True,
+        "write_mode": "realtime_add_delete_qslcall",
+        "max_batch": 10,
+        "update_note": "A API do Club Log corrige somente o indicativo (QSLCALL).",
+    }
     base_url = "https://clublog.org"
 
     def _required(self) -> Dict[str, str]:
@@ -435,6 +478,42 @@ class ClubLogCloudAdapter(CloudLogAdapter):
             raise CloudProviderError(response.text.strip() or f"Club Log HTTP {response.status_code}")
         return {"ok": True, "message": response.text.strip()}
 
+    def update_qso(
+        self,
+        external_id: str,
+        changes: Dict[str, Any],
+        record: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        """Correct CALL through Club Log's documented QSLCALL mechanism.
+
+        Club Log explicitly does not expose a generic real-time field update.
+        The original QSO fields must therefore be preserved exactly and only a
+        replacement callsign may be supplied.
+        """
+        normalized = {str(k).upper(): v for k, v in dict(changes or {}).items()}
+        if set(normalized) != {"CALL"} or not str(normalized.get("CALL") or "").strip():
+            raise CloudProviderError("Club Log realtime update supports only CALL through QSLCALL")
+        if not record:
+            raise CloudProviderError("Club Log CALL correction requires the exact original QSO record")
+        fields = self._required()
+        api_key = str(self.credentials.get("api_key") or "").strip()
+        if not api_key:
+            raise CloudProviderError("Club Log API key is required for update")
+        original = dict(record)
+        original["QSLCALL"] = str(normalized["CALL"]).strip().upper()
+        response = self.client.post(self.base_url + "/realtime.php", data={
+            "email": fields["email"], "password": fields["password"],
+            "callsign": fields["callsign"], "adif": record_to_adif(original),
+            "api": api_key,
+        })
+        if not response.is_success:
+            raise CloudProviderError(response.text.strip() or f"Club Log HTTP {response.status_code}")
+        body = response.text.strip()
+        lowered = body.lower()
+        if "error" in lowered or "not modified" in lowered or "not updated" in lowered:
+            raise CloudProviderError(body or "Club Log did not confirm the CALL correction")
+        return {"ok": True, "status": "call_corrected", "message": body}
+
     @staticmethod
     def _band_id(band: Any) -> str:
         text = str(band or "").strip().lower()
@@ -474,7 +553,12 @@ class ClubLogCloudAdapter(CloudLogAdapter):
 
 class EQSLCloudAdapter(CloudLogAdapter):
     provider = "EQSL"
-    capabilities = {"read": True, "add": True, "update": False, "delete": False}
+    capabilities = {
+        "read": True, "add": True, "update": False, "delete": False,
+        "update_fields": [], "requires_external_id": False,
+        "write_mode": "official_import_only",
+        "update_note": "A interface pública documentada do eQSL permite importar, mas não editar ou excluir.",
+    }
     base_url = "https://www.eqsl.cc/qslcard/"
 
     def _required(self) -> Dict[str, str]:

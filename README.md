@@ -5,9 +5,18 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.1.2** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.1.3** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.1.2. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.1.3. O aplicativo Android é um companion em preview e não executa as rotinas remotas de CRUD.
+
+## Novidades v1.1.3 — CRUD auditado dos logbooks
+
+- **QRZ:** criar, editar campos descritivos e excluir por `LOGID`; toda edição/exclusão relê o QSO exato e valida sua identidade. O `REPLACE` preserva confirmações e não aceita alterar identidade, modo ou frequência.
+- **World Radio League:** CRUD completo pelos endpoints REST oficiais, usando ID remoto e timestamp UTC ISO-8601.
+- **Club Log:** criação e exclusão em tempo real; edição limitada à correção de indicativo pelo mecanismo oficial `QSLCALL`, com lote máximo de 10 exclusões.
+- **HRDLog.net:** criar, editar e excluir pelo protocolo oficial `ADIFKey`; como não há API de leitura completa, o snapshot gerenciado continua sendo reconciliado por export ADIF.
+- **eQSL e LoTW:** somente as operações realmente publicadas por cada serviço; nenhuma edição/exclusão é simulada.
+- Prévia obrigatória, backup local antes da escrita, campos permitidos por plataforma, limite por lote, auditoria e confirmação digitada para exclusões permanentes.
 
 ## Melhorias v1.1.2 — saneamento e segurança operacional
 
@@ -59,18 +68,20 @@ Abra **Integridade** no menu. Atualize as fontes em **Fontes**, analise os cart�
 
 ## Integrações
 
-| Fonte | Leitura | Escrita suportada | Papel |
-| --- | :---: | :---: | --- |
-| QRZ | ✅ | ✅ restrita | Log de referência e destino auditado de confirmações eQSL |
-| World Radio League | ✅ | ✅ | Log online |
-| Club Log | ✅ | ✅ | Log online |
-| eQSL OutBox | ✅ | ✅ inclusão | Log enviado ao eQSL |
-| eQSL Inbox | ✅ | — | Evidência de QSL recebida |
-| LoTW | ✅ | — | Log completo aceito pelo LoTW + evidência de QSL recebida |
-| HRDLog.net | bootstrap + envio | ✅ inclusão | Log online/híbrido |
-| Ham Radio Deluxe | ADIF local | — | Fonte manual/local |
+| Fonte | Ler | Criar | Editar | Excluir | Observação |
+| --- | :---: | :---: | :---: | :---: | --- |
+| QRZ | ✅ | ✅ | ✅ restrita | ✅ | Campos descritivos; identidade e QSL protegidos |
+| World Radio League | ✅ | ✅ | ✅ | ✅ | CRUD REST por ID remoto |
+| Club Log | ✅ | ✅ | `CALL` | ✅ | `QSLCALL`; exclusão por identidade exata |
+| eQSL OutBox | ✅ | ✅ | — | — | API pública documenta importação |
+| eQSL Inbox | ✅ | — | — | — | Evidência de QSL recebida |
+| LoTW | ✅ | — | — | — | Log aceito + evidência de QSL |
+| HRDLog.net | ADIF | ✅ | ✅ | ✅ | Escrita oficial por chave ADIF |
+| Ham Radio Deluxe local | ADIF | — | — | — | Fonte manual; banco local não é alterado |
 
 As capacidades variam de acordo com a API pública oferecida por cada serviço. O QSO Manager não inventa operações que o provedor não documenta ou não permite.
+
+Veja a pesquisa técnica e os limites operacionais em [Capacidades de escrita das APIs](docs/API_WRITE_CAPABILITIES.md).
 
 ## Downloads paralelos das fontes
 

@@ -5,6 +5,7 @@ from typing import Dict, Any, Optional
 
 from ..adapters.cloud_logs import CloudProviderError, PROVIDERS
 from ..adapters.eqsl_cloud_v510 import EQSLCloudAdapterV510
+from ..adapters.hrdlog import HRDLogCloudAdapter
 from ..adapters.qrz_cloud_v501 import QRZCloudAdapterV501
 from .cloud_hub_service import CloudHubService as BaseCloudHubService
 from .cloud_snapshot_store import CloudSnapshotStore
@@ -15,6 +16,7 @@ from .fast_adif_comparison_service import FastADIFComparisonService
 # adapters that need hardened production behavior observed against real logs.
 PROVIDERS["QRZ"] = QRZCloudAdapterV501
 PROVIDERS["EQSL"] = EQSLCloudAdapterV510
+PROVIDERS["HRDLOG"] = HRDLogCloudAdapter
 
 
 class CloudHubService(BaseCloudHubService):
@@ -104,11 +106,20 @@ class CloudHubService(BaseCloudHubService):
         provider = self._provider(provider)
         return {"ok": True, **self.snapshots.clear(provider)}
 
-    def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False):
+    def update_remote(
+        self,
+        provider: str,
+        index: int,
+        changes: Dict[str, Any],
+        confirm: bool = False,
+        defer_snapshot: bool = False,
+    ):
         normalized = dict(changes)
         if provider.strip().upper() == "WRL" and "FREQ" in normalized:
             try:
                 normalized["FREQ"] = float(normalized["FREQ"])
             except (TypeError, ValueError) as exc:
                 raise CloudProviderError("WRL frequency must be a number in MHz") from exc
-        return super().update_remote(provider, index, normalized, confirm)
+        return super().update_remote(
+            provider, index, normalized, confirm, defer_snapshot=defer_snapshot,
+        )

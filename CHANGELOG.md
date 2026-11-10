@@ -48,6 +48,19 @@
 
 # Changelog
 
+## [1.1.3] - 2026-11-10
+
+### CRUD auditado por plataforma
+
+- QRZ com edição segura por `INSERT OPTION=REPLACE`, pré-leitura exata, preservação de confirmações, verificação pós-escrita e exclusão por `LOGID`.
+- World Radio League com criação, edição e exclusão REST; correção do payload de criação para timestamp UTC ISO-8601.
+- Club Log com correção de indicativo via `QSLCALL`, exclusão exata e limite de segurança de 10 registros por lote.
+- HRDLog.net com `INSERT`, `UPDATE` e `DELETE` segundo a biblioteca oficial do mantenedor, usando `ADIFKey` com `CALL`, `QSO_DATE` e `TIME_ON`.
+- Snapshot HRDLog atualizado atomicamente após respostas confirmadas, sem fingir uma API de leitura completa inexistente.
+- eQSL, LoTW e HRD local permanecem limitados às operações oficialmente disponíveis.
+- Matriz dinâmica de capacidades, campos editáveis por provedor, prévia obrigatória, backup e confirmação digitada para exclusão.
+- Testes simulados para todos os contratos de escrita, sem modificar contas reais.
+
 ## [1.0.7] - 2026-09-30
 
 ### Award Master Safe V6

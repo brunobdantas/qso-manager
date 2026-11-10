@@ -11,14 +11,18 @@ from .credential_store import CredentialStore
 
 
 class CloudHubService:
-    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRD")
-    REMOTE_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL")
-    PROVIDER_LABELS = {"QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log", "EQSL": "eQSL", "HRD": "Ham Radio Deluxe"}
+    PROVIDER_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG", "HRD")
+    REMOTE_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "HRDLOG")
+    PROVIDER_LABELS = {
+        "QRZ": "QRZ", "WRL": "World Radio League", "CLUBLOG": "Club Log",
+        "EQSL": "eQSL", "HRDLOG": "HRDLog.net", "HRD": "Ham Radio Deluxe",
+    }
     PROVIDER_NOTES = {
-        "QRZ": "Base preferencial. Leitura completa e inclusão segura; edição/exclusão remota ficam bloqueadas para proteger confirmações.",
+        "QRZ": "Base preferencial. CRUD oficial com edição limitada a campos seguros, pré-leitura exata e preservação de confirmações.",
         "WRL": "API oficial de leitura e escrita. Contatos possuem ID estável e podem ser incluídos, corrigidos e excluídos.",
-        "CLUBLOG": "Download do log, inclusão em tempo real e exclusão por identidade exata. O export é minimalista e pode descartar campos do log original.",
+        "CLUBLOG": "Download, inclusão e exclusão em tempo real; edição limitada à correção de indicativo via QSLCALL.",
         "EQSL": "OutBox em ADIF e inclusão por interface de logger. O download é uma representação normalizada; edição/exclusão remota não é exposta.",
+        "HRDLOG": "CRUD oficial por chave ADIF. Sem leitura completa por API: o snapshot é reconciliado por export ADIF.",
         "HRD": "Snapshot local importado de um arquivo ADIF do Ham Radio Deluxe. É comparado com todas as fontes online e nunca altera o arquivo original.",
     }
     LOCAL_CAPABILITIES = {"read": True, "add": False, "update": False, "delete": False}
@@ -78,6 +82,8 @@ class CloudHubService:
 
     def sync(self, provider: str) -> Dict[str, Any]:
         provider = self._provider(provider)
+        if not PROVIDERS[provider].capabilities.get("read"):
+            raise CloudProviderError(f"{provider} does not expose a supported full-log read API")
         with adapter_for(provider, self._credentials(provider)) as adapter:
             result = adapter.fetch_all()
         records = result.get("records") or []
@@ -89,6 +95,9 @@ class CloudHubService:
     def sync_all(self) -> Dict[str, Any]:
         results: List[Dict[str, Any]] = []
         for provider in self.REMOTE_PROVIDERS:
+            if not PROVIDERS[provider].capabilities.get("read"):
+                results.append({"provider": provider, "ok": False, "skipped": True, "error": "read not supported"})
+                continue
             if not self.credentials.configured(provider):
                 results.append({"provider": provider, "ok": False, "skipped": True, "error": "not configured"})
                 continue
@@ -228,7 +237,14 @@ class CloudHubService:
         row = rows[index]
         return {"provider": provider, "index": index, "external_id": self._external_id(provider, row), "record": row}
 
-    def publish(self, source: str, index: int, target: str, confirm: bool = False) -> Dict[str, Any]:
+    def publish(
+        self,
+        source: str,
+        index: int,
+        target: str,
+        confirm: bool = False,
+        defer_snapshot: bool = False,
+    ) -> Dict[str, Any]:
         source = self._provider(source)
         target = self._provider(target)
         if source == target:
@@ -246,24 +262,52 @@ class CloudHubService:
                 verification = adapter.fetch_logids([str(result["external_id"])])
                 if not verification.get("verified"):
                     raise CloudProviderError("QRZ insert returned success but exact re-FETCH verification failed")
-        return {"ok": True, "source": source, "target": target, "backup": str(backup) if backup else None, "result": result, "verification": verification, "needs_resync": target != "QRZ"}
+        patch = {"op": "append", "record": dict(row)} if target == "HRDLOG" else None
+        if patch and not defer_snapshot:
+            self.apply_snapshot_patches(target, [patch])
+        return {
+            "ok": True, "source": source, "target": target,
+            "backup": str(backup) if backup else None, "result": result,
+            "verification": verification, "needs_resync": target != "HRDLOG",
+            "snapshot_patch": patch,
+        }
 
-    def update_remote(self, provider: str, index: int, changes: Dict[str, Any], confirm: bool = False) -> Dict[str, Any]:
+    def update_remote(
+        self,
+        provider: str,
+        index: int,
+        changes: Dict[str, Any],
+        confirm: bool = False,
+        defer_snapshot: bool = False,
+    ) -> Dict[str, Any]:
         provider = self._provider(provider)
         item = self.record(provider, index)
         if not PROVIDERS[provider].capabilities.get("update"):
             raise CloudProviderError(f"{provider} remote update is intentionally unavailable")
         if not confirm:
             return {"dry_run": True, "provider": provider, "qso": item, "changes": changes}
+        capabilities = PROVIDERS[provider].capabilities
         external_id = item.get("external_id")
-        if not external_id:
+        if capabilities.get("requires_external_id") and not external_id:
             raise CloudProviderError(f"{provider} record has no stable external id")
         backup = self.snapshots.backup(provider)
         with adapter_for(provider, self._credentials(provider)) as adapter:
-            result = adapter.update_qso(external_id, changes)
-        return {"ok": True, "backup": str(backup) if backup else None, "result": result, "needs_resync": True}
+            result = adapter.update_qso(external_id or "", changes, record=item["record"])
+        patch = {"op": "update", "index": index, "changes": dict(changes)} if provider == "HRDLOG" else None
+        if patch and not defer_snapshot:
+            self.apply_snapshot_patches(provider, [patch])
+        return {
+            "ok": True, "backup": str(backup) if backup else None, "result": result,
+            "needs_resync": provider != "HRDLOG", "snapshot_patch": patch,
+        }
 
-    def delete_remote(self, provider: str, index: int, confirm: bool = False) -> Dict[str, Any]:
+    def delete_remote(
+        self,
+        provider: str,
+        index: int,
+        confirm: bool = False,
+        defer_snapshot: bool = False,
+    ) -> Dict[str, Any]:
         provider = self._provider(provider)
         item = self.record(provider, index)
         if not PROVIDERS[provider].capabilities.get("delete"):
@@ -273,7 +317,47 @@ class CloudHubService:
         backup = self.snapshots.backup(provider)
         with adapter_for(provider, self._credentials(provider)) as adapter:
             result = adapter.delete_qso(item.get("external_id") or "", record=item["record"])
-        return {"ok": True, "backup": str(backup) if backup else None, "result": result, "needs_resync": True}
+        patch = {"op": "delete", "index": index} if provider == "HRDLOG" else None
+        if patch and not defer_snapshot:
+            self.apply_snapshot_patches(provider, [patch])
+        return {
+            "ok": True, "backup": str(backup) if backup else None, "result": result,
+            "needs_resync": provider != "HRDLOG", "snapshot_patch": patch,
+        }
+
+    def apply_snapshot_patches(self, provider: str, patches: List[Dict[str, Any]]) -> Dict[str, Any]:
+        """Apply confirmed write-only-provider changes atomically to its snapshot."""
+        provider = self._provider(provider)
+        if provider != "HRDLOG":
+            raise CloudProviderError("Managed snapshot patches are currently supported only for HRDLog")
+        payload = self.snapshots.load(provider)
+        records = list(payload.get("records") or [])
+        updates = [p for p in patches if p.get("op") == "update"]
+        deletes = [p for p in patches if p.get("op") == "delete"]
+        appends = [p for p in patches if p.get("op") == "append"]
+        for patch in updates:
+            index = int(patch.get("index", -1))
+            if 0 <= index < len(records):
+                records[index] = {**records[index], **dict(patch.get("changes") or {})}
+        for index in sorted({int(p.get("index", -1)) for p in deletes}, reverse=True):
+            if 0 <= index < len(records):
+                records.pop(index)
+        for patch in appends:
+            record = dict(patch.get("record") or {})
+            if record:
+                record["APP_QSOMANAGER_HRDLOG_STATUS"] = "managed_online"
+                records.append(record)
+        metadata = {
+            **dict(payload.get("metadata") or {}),
+            "source": "hrdlog_bootstrap_plus_online_crud",
+            "coverage": "FULL_EXPORT",
+            "managed_after_bootstrap": True,
+            "last_managed_writes": len(patches),
+        }
+        summary = self.snapshots.save(provider, records, metadata)
+        from .qso_manager_workspace import QSOManagerWorkspace
+        QSOManagerWorkspace.invalidate_cache()
+        return {"ok": True, **summary}
 
     @staticmethod
     def _evidence_key(item: Dict[str, Any]) -> tuple:

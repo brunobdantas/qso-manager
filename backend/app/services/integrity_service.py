@@ -20,7 +20,7 @@ from ..core.runtime import user_data_root
 from .qso_manager_workspace import QSOManagerWorkspace
 
 PROVIDERS = ("WRL", "CLUBLOG", "EQSL", "HRDLOG")
-ASSISTED_WRITABLE = {"WRL", "CLUBLOG", "EQSL"}  # HRDLog has no verifiable full-log read API
+ASSISTED_WRITABLE = {"WRL", "CLUBLOG", "EQSL", "HRDLOG"}
 FULL_COVERAGE = {"API_FULL_SYNC", "FULL_EXPORT"}
 COMPARE_FIELDS = ("RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY", "NAME", "QTH", "COMMENT")
 DECISIONS = {"KEEP_SEPARATE", "CONFIRMED_DUPLICATE", "ACCEPT_EXCEPTION", "NEEDS_REVIEW", "RESOLVED"}

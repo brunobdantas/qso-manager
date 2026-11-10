@@ -121,6 +121,7 @@ class QSOManagerBulkJobManager:
             {k: started.get(k) for k in ("job_id", "action", "source", "target", "delete_source", "changes", "selected", "actionable")},
         )
         modified_providers = set()
+        snapshot_patches: Dict[str, List[Dict[str, Any]]] = {}
         processed = succeeded = failed = 0
         circuit_open = set()
         errors: List[Dict[str, Any]] = []
@@ -175,43 +176,72 @@ class QSOManagerBulkJobManager:
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target already present"}
                         else:
                             src, src_index = workspace.canonical_ref(logical_id, preferred_source=source)
-                            result = hub.publish(src, src_index, target, confirm=True)
+                            result = hub.publish(
+                                src, src_index, target, confirm=True, defer_snapshot=True,
+                            )
                             if result.get("ok") is not True:
                                 raise RuntimeError("Remote insert was not confirmed")
-                            modified_providers.add(target)
+                            if result.get("needs_resync"):
+                                modified_providers.add(target)
+                            if result.get("snapshot_patch"):
+                                snapshot_patches.setdefault(target, []).append(result["snapshot_patch"])
                     elif action == "UPDATE":
                         if not target or target not in refs:
                             actionable = False
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target not present"}
                         else:
-                            result = hub.update_remote(target, int(refs[target]), changes, confirm=True)
+                            result = hub.update_remote(
+                                target, int(refs[target]), changes,
+                                confirm=True, defer_snapshot=True,
+                            )
                             if result.get("ok") is not True:
                                 raise RuntimeError("Remote update was not confirmed")
-                            modified_providers.add(target)
+                            if result.get("needs_resync"):
+                                modified_providers.add(target)
+                            if result.get("snapshot_patch"):
+                                snapshot_patches.setdefault(target, []).append(result["snapshot_patch"])
                     elif action == "DELETE":
                         if not target or target not in refs:
                             actionable = False
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "target not present"}
                         else:
-                            result = hub.delete_remote(target, int(refs[target]), confirm=True)
+                            result = hub.delete_remote(
+                                target, int(refs[target]), confirm=True,
+                                defer_snapshot=True,
+                            )
                             if result.get("ok") is not True:
                                 raise RuntimeError("Remote deletion was not confirmed")
-                            modified_providers.add(target)
+                            if result.get("needs_resync"):
+                                modified_providers.add(target)
+                            if result.get("snapshot_patch"):
+                                snapshot_patches.setdefault(target, []).append(result["snapshot_patch"])
                     elif action == "MOVE":
                         if not source or not target or source not in refs or target in refs:
                             actionable = False
                             result = {"logical_id": logical_id, "status": "skipped", "reason": "route not applicable"}
                         else:
-                            publish_result = hub.publish(source, int(refs[source]), target, confirm=True)
+                            publish_result = hub.publish(
+                                source, int(refs[source]), target,
+                                confirm=True, defer_snapshot=True,
+                            )
                             if publish_result.get("ok") is not True:
                                 raise RuntimeError("Move target did not confirm creation; source preserved")
-                            modified_providers.add(target)
+                            if publish_result.get("needs_resync"):
+                                modified_providers.add(target)
+                            if publish_result.get("snapshot_patch"):
+                                snapshot_patches.setdefault(target, []).append(publish_result["snapshot_patch"])
                             delete_result = None
                             if delete_source:
-                                delete_result = hub.delete_remote(source, int(refs[source]), confirm=True)
+                                delete_result = hub.delete_remote(
+                                    source, int(refs[source]), confirm=True,
+                                    defer_snapshot=True,
+                                )
                                 if delete_result.get("ok") is not True:
                                     raise RuntimeError("Move source deletion failed")
-                                modified_providers.add(source)
+                                if delete_result.get("needs_resync"):
+                                    modified_providers.add(source)
+                                if delete_result.get("snapshot_patch"):
+                                    snapshot_patches.setdefault(source, []).append(delete_result["snapshot_patch"])
                             result = {"ok": True, "publish": publish_result, "delete": delete_result}
                     else:
                         raise ValueError(f"Unsupported bulk action {action}")
@@ -259,6 +289,13 @@ class QSOManagerBulkJobManager:
                 )
 
             flush_audit()
+            for provider, patches in snapshot_patches.items():
+                try:
+                    hub.apply_snapshot_patches(provider, patches)
+                    IntegrityStore().provider_result(provider, None)
+                except Exception as exc:
+                    errors.append({"provider": provider, "error": f"local snapshot update: {exc}"})
+                    failed += 1
             if modified_providers:
                 cls._set(job_id, phase="resync", progress=90, message="Atualizando snapshots das plataformas alteradas…")
                 for provider in sorted(modified_providers):
