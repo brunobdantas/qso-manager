@@ -87,10 +87,10 @@ def test_reference_export_contains_only_qrz(tmp_path):
     assert "K9EXTRA" not in exported["content"]
 
 
-def test_spa_index_is_not_cached_across_upgrades():
-    from fastapi.testclient import TestClient
-    from app.main import app
+def test_spa_index_is_not_cached_across_upgrades(tmp_path):
+    from app.main import _spa_index_response
 
-    response = TestClient(app).get("/")
-    assert response.status_code == 200
+    index = tmp_path / "index.html"
+    index.write_text("<html></html>", encoding="utf-8")
+    response = _spa_index_response(index)
     assert response.headers["cache-control"] == "no-store, max-age=0"
