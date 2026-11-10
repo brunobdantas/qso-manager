@@ -1,8 +1,8 @@
-# Production Readiness — v1.0.0
+# Production Readiness — v1.1.3
 
 ## Supported production target
 
-**Windows 11 x64-compatible** is the production target for v1.0.0.
+**Windows 11 x64-compatible** is the production target for v1.1.3.
 
 The Android application is a companion preview. It intentionally does not claim parity for audited QRZ mutation.
 

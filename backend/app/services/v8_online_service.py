@@ -49,7 +49,7 @@ class V8OnlineService:
         "EQSL": "OutBox online: QSOs enviados ao eQSL.",
         "EQSL_INBOX": "Inbox online: evidências de eQSLs recebidos.",
         "LOTW": "Log LoTW completo (QSOs aceitos + confirmações), com atualização incremental pelos cursores oficiais.",
-        "HRDLOG": "Bootstrap por ADIF + inserções online. Alterações feitas diretamente no site exigem nova reconciliação ADIF.",
+        "HRDLOG": "CRUD oficial por chave ADIF. A leitura completa continua por reconciliação de um export ADIF.",
     }
 
     def __init__(
@@ -80,7 +80,7 @@ class V8OnlineService:
             return self.credentials.configured("EQSL")
         return self.credentials.configured(provider)
 
-    def _capabilities(self, provider: str) -> Dict[str, bool]:
+    def _capabilities(self, provider: str) -> Dict[str, Any]:
         if provider == "LOTW":
             return dict(LoTWConfirmationAdapter.capabilities)
         if provider == "EQSL_INBOX":
@@ -125,7 +125,7 @@ class V8OnlineService:
             "hrdlog_policy": {
                 "full_read_api": False,
                 "bootstrap": "ADIF",
-                "online_update": "realtime insert",
+                "online_update": "realtime insert/update/delete by ADIF key",
                 "direct_site_changes_detected": False,
             },
         }

@@ -121,7 +121,7 @@ class QSOManagerWorkspace:
         }
 
     @staticmethod
-    def _capabilities(provider: str) -> Dict[str, bool]:
+    def _capabilities(provider: str) -> Dict[str, Any]:
         adapter = PROVIDERS.get(provider)
         return dict(adapter.capabilities) if adapter else dict(CloudHubService.LOCAL_CAPABILITIES)
 
@@ -366,7 +366,18 @@ class QSOManagerWorkspace:
             "with_differences": sum(1 for row in rows if row["difference_count"]),
             "confirmed": sum(1 for row in rows if row["confirmed"]),
         }
-        return {**options, "summary": summary}
+        capability_matrix = {
+            provider: self._capabilities(provider) for provider in self.PROVIDER_ORDER
+        }
+        return {
+            **options,
+            "summary": summary,
+            "capability_matrix": capability_matrix,
+            "write_targets": [
+                provider for provider, caps in capability_matrix.items()
+                if any(caps.get(action) for action in ("add", "update", "delete"))
+            ],
+        }
 
     @staticmethod
     def _bool_filter(value: Optional[str]) -> Optional[bool]:
@@ -546,16 +557,25 @@ class QSOManagerWorkspace:
 
         target_name = self.hub._provider(target) if target else None
         source_name = self.hub._provider(source) if source else None
-        normalized_changes = {str(k).upper(): v for k, v in (changes or {}).items() if v not in (None, "")}
+        normalized_changes = {str(k).upper(): v for k, v in (changes or {}).items() if v is not None}
+        target_caps = self._capabilities(target_name) if target_name else {}
+        max_batch = int(target_caps.get("max_batch") or 10000)
+        update_fields = set(target_caps.get("update_fields") or [])
+        unsupported_fields = sorted(set(normalized_changes) - update_fields) if normalized_changes else []
         actionable = 0
         skipped = 0
         unsupported = 0
         rows: List[Dict[str, Any]] = []
 
-        for logical_id in ids:
+        for ordinal, logical_id in enumerate(ids):
             row = self._raw(logical_id)
             refs = row["refs"]
             item = {"logical_id": logical_id, "call": row["call"], "date": row["date"], "time": row["time"], "providers": row["providers"]}
+            if target_name and action in {"PUBLISH", "UPDATE", "DELETE"} and ordinal >= max_batch:
+                unsupported += 1
+                item["status"] = "provider_batch_limit"
+                rows.append(item)
+                continue
             if action == "PUBLISH":
                 if not target_name or target_name not in self.hub.REMOTE_PROVIDERS or not self._capabilities(target_name).get("add"):
                     unsupported += 1
@@ -570,29 +590,32 @@ class QSOManagerWorkspace:
                     actionable += 1
                     item["status"] = "ready"
             elif action == "UPDATE":
-                if not target_name or not self._capabilities(target_name).get("update"):
+                if not target_name or not target_caps.get("update"):
                     unsupported += 1
                     item["status"] = "unsupported"
                 elif target_name not in refs:
                     skipped += 1
                     item["status"] = "not_present"
-                elif not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
+                elif target_caps.get("requires_external_id") and not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
                     unsupported += 1
                     item["status"] = "stable_remote_id_missing"
                 elif not normalized_changes:
                     unsupported += 1
                     item["status"] = "no_changes"
+                elif unsupported_fields:
+                    unsupported += 1
+                    item["status"] = "unsupported_fields:" + ",".join(unsupported_fields)
                 else:
                     actionable += 1
                     item["status"] = "ready"
             elif action == "DELETE":
-                if not target_name or not self._capabilities(target_name).get("delete"):
+                if not target_name or not target_caps.get("delete"):
                     unsupported += 1
                     item["status"] = "unsupported"
                 elif target_name not in refs:
                     skipped += 1
                     item["status"] = "not_present"
-                elif target_name == "WRL" and not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
+                elif target_caps.get("requires_external_id") and not (row.get("source_records", {}).get(target_name) or {}).get("external_id"):
                     unsupported += 1
                     item["status"] = "stable_remote_id_missing"
                 else:
@@ -634,6 +657,9 @@ class QSOManagerWorkspace:
             "source": source_name,
             "delete_source": bool(delete_source),
             "changes": normalized_changes,
+            "max_batch": max_batch,
+            "update_fields": sorted(update_fields),
+            "provider_note": target_caps.get("update_note") or target_caps.get("read_note"),
             "sample": rows[:20],
             "capability_matrix": {
                 provider: self._capabilities(provider) for provider in self.PROVIDER_ORDER

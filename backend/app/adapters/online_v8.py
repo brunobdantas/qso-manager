@@ -10,71 +10,10 @@ from urllib.parse import urljoin
 
 import httpx
 
-from .cloud_logs import CloudLogAdapter, CloudProviderError, record_to_adif
+from .cloud_logs import CloudLogAdapter, CloudProviderError
+from .hrdlog import HRDLogCloudAdapter
 from ..adif.parser import ADIFParser
 from ..core.version import __version__
-
-
-class HRDLogCloudAdapter(CloudLogAdapter):
-    """HRDLog realtime writer.
-
-    HRDLog documents a realtime upload endpoint but no supported full-log read
-    endpoint.  QSO Manager therefore bootstraps the comparison snapshot from a
-    user ADIF export and only appends records after a confirmed online insert.
-    """
-
-    provider = "HRDLOG"
-    endpoint = "https://robot.hrdlog.net/NewEntry.aspx"
-    capabilities = {"read": False, "add": True, "update": False, "delete": False}
-
-    def _required(self) -> Dict[str, str]:
-        callsign = str(self.credentials.get("callsign") or "").strip().upper()
-        code = str(self.credentials.get("upload_code") or self.credentials.get("code") or "").strip()
-        if not callsign or not code:
-            raise CloudProviderError("HRDLog requires Callsign and Upload Code")
-        return {"callsign": callsign, "code": code}
-
-    def test_connection(self) -> Dict[str, Any]:
-        self._required()
-        return {
-            "ok": True,
-            "write_only": True,
-            "message": "Credenciais completas. O HRDLog valida o Upload Code no primeiro envio; o teste não cria QSO.",
-        }
-
-    def fetch_all(self) -> Dict[str, Any]:
-        raise CloudProviderError(
-            "HRDLog não oferece leitura completa suportada; use o ADIF de bootstrap e atualização online."
-        )
-
-    def add_qso(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        auth = self._required()
-        adif = record_to_adif(record)
-        response = self.client.post(
-            self.endpoint,
-            data={
-                "Code": auth["code"],
-                "ADIFData": adif,
-                "Callsign": auth["callsign"],
-            },
-            headers={
-                "Content-Type": "application/x-www-form-urlencoded",
-                "User-Agent": f"PU2BRU-QSO-Manager/{__version__}",
-            },
-        )
-        response.raise_for_status()
-        body = response.text or ""
-        lower = body.lower()
-        if "<insert>1" in lower:
-            return {"ok": True, "status": "inserted", "message": body[:500]}
-        if "<insert>0" in lower:
-            # Duplicate is a valid remote state for reconciliation purposes.
-            return {"ok": True, "status": "duplicate", "message": body[:500]}
-        if "unknown user</error>" in lower or "invalid token</error>" in lower:
-            raise CloudProviderError("HRDLog rejected Callsign/Upload Code")
-        error = re.sub(r"<[^>]+>", " ", html.unescape(body))
-        error = re.sub(r"\s+", " ", error).strip()
-        raise CloudProviderError(error[:500] or "HRDLog did not confirm the insert")
 
 
 class LoTWConfirmationAdapter(CloudLogAdapter):

@@ -26,6 +26,29 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
     PAGE_SIZE = 250
     READ_ATTEMPTS = 3
     RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+    GENERIC_UPDATE_FIELDS = {
+        "COMMENT", "RST_SENT", "RST_RCVD", "GRIDSQUARE", "NAME", "QTH",
+        "STATE", "CNTY", "COUNTRY", "IOTA", "CQZ", "ITUZ",
+    }
+    SAFE_REPLACE_FIELDS = GENERIC_UPDATE_FIELDS | {"EQSL_QSL_RCVD", "EQSL_QSLRDATE"}
+    IDENTITY_FIELDS = (
+        "CALL", "QSO_DATE", "TIME_ON", "BAND", "FREQ", "MODE", "SUBMODE",
+        "STATION_CALLSIGN",
+    )
+    CONFIRMATION_FIELDS = (
+        "QSL_SENT", "QSL_RCVD", "QSLSDATE", "QSLRDATE", "LOTW_QSL_SENT",
+        "LOTW_QSL_RCVD", "LOTW_QSLSDATE", "LOTW_QSLRDATE", "EQSL_QSL_SENT",
+        "EQSL_QSL_RCVD", "EQSL_QSLSDATE", "EQSL_QSLRDATE",
+    )
+    capabilities = {
+        "read": True, "add": True, "update": True, "delete": True,
+        "update_fields": sorted(GENERIC_UPDATE_FIELDS),
+        "requires_external_id": True,
+        "requires_snapshot_record": True,
+        "write_mode": "official_exact_fetch_replace_delete",
+        "max_batch": 500,
+        "update_note": "Somente campos descritivos; identidade e confirmações são preservadas.",
+    }
 
     @staticmethod
     def _access_help(action: str, original: str) -> str:
@@ -275,11 +298,11 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
         This method is deliberately narrower than a generic update API.  It is
         intended for audited maintenance flows such as eQSL confirmation sync.
         """
-        allowed = {"EQSL_QSL_RCVD", "EQSL_QSLRDATE"}
         normalized = {str(k).upper(): v for k, v in dict(changes or {}).items()}
-        if not normalized or not set(normalized).issubset(allowed):
+        if not normalized or not set(normalized).issubset(self.SAFE_REPLACE_FIELDS):
             raise CloudProviderError(
-                "QRZ safe replace accepts only EQSL_QSL_RCVD and EQSL_QSLRDATE"
+                "QRZ safe replace rejected unsupported fields: "
+                + ", ".join(sorted(set(normalized) - self.SAFE_REPLACE_FIELDS))
             )
 
         before = self.fetch_exact(logid)
@@ -343,6 +366,86 @@ class QRZCloudAdapterV501(QRZCloudAdapter):
             "after": after["record"],
             "changes": normalized,
             "protected_fields": protected,
+        }
+
+    @staticmethod
+    def _compare_value(name: str, value: Any) -> str:
+        text = str(value or "").strip().upper()
+        if name in {"QSO_DATE", "QSLRDATE", "QSLSDATE"}:
+            return text.replace("-", "").replace("/", "")
+        if name in {"TIME_ON", "TIME_OFF"}:
+            return text.replace(":", "")[:6]
+        return text
+
+    def _verify_snapshot_identity(self, live: Dict[str, Any], snapshot: Dict[str, Any]) -> None:
+        mismatches = []
+        for field in self.IDENTITY_FIELDS:
+            if snapshot.get(field) in (None, ""):
+                continue
+            if self._compare_value(field, live.get(field)) != self._compare_value(field, snapshot.get(field)):
+                mismatches.append(field)
+        if mismatches:
+            raise CloudProviderError(
+                "QRZ live record no longer matches the approved snapshot: " + ", ".join(mismatches)
+            )
+
+    def update_qso(
+        self,
+        external_id: str,
+        changes: Dict[str, Any],
+        record: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        if not external_id:
+            raise CloudProviderError("QRZ LOGID is required for update")
+        if not record:
+            raise CloudProviderError("QRZ update requires the approved snapshot record")
+        normalized = {str(k).upper(): v for k, v in dict(changes or {}).items()}
+        unsupported = sorted(set(normalized) - self.GENERIC_UPDATE_FIELDS)
+        if not normalized:
+            raise CloudProviderError("No QRZ fields supplied for update")
+        if unsupported:
+            raise CloudProviderError(
+                "QRZ managed update does not allow identity/confirmation fields: " + ", ".join(unsupported)
+            )
+        live = self.fetch_exact(external_id)
+        self._verify_snapshot_identity(live["record"], record)
+        expected = {
+            field: record.get(field)
+            for field in self.IDENTITY_FIELDS
+            if record.get(field) not in (None, "")
+        }
+        protected = tuple(dict.fromkeys((*self.IDENTITY_FIELDS, *self.CONFIRMATION_FIELDS)))
+        return self.replace_exact_fields(
+            external_id,
+            normalized,
+            protected_fields=protected,
+            expected_fields=expected,
+        )
+
+    def delete_qso(
+        self,
+        external_id: str,
+        record: Dict[str, Any] | None = None,
+    ) -> Dict[str, Any]:
+        if not external_id:
+            raise CloudProviderError("QRZ LOGID is required for delete")
+        if not record:
+            raise CloudProviderError("QRZ delete requires the approved snapshot record")
+        before = self.fetch_exact(external_id)
+        self._verify_snapshot_identity(before["record"], record)
+        result = self._post("DELETE", LOGIDS=str(external_id))
+        code = str(result.get("RESULT") or "").upper()
+        count = str(result.get("COUNT") or "").strip()
+        if code != "OK" or count not in {"", "1"}:
+            raise CloudProviderError(
+                f"QRZ DELETE was not confirmed (RESULT={code or '?'}, COUNT={count or '?'})"
+            )
+        return {
+            "ok": True,
+            "status": "deleted",
+            "external_id": str(external_id),
+            "count": int(count or "1"),
+            "before": before["record"],
         }
 
     def _parse_page(self, data: Dict[str, str]) -> Tuple[List[Dict[str, Any]], List[str]]:

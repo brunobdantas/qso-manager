@@ -61,7 +61,7 @@ def test_issues_group_types_and_do_not_count_qsl_as_pending(tmp_path):
     assert result["items"][0]["severity"] == "HIGH"
 
 
-def test_hrdlog_plan_explains_all_unsupported_missing_records(tmp_path):
+def test_hrdlog_plan_allows_safe_missing_records_with_managed_adif_snapshot(tmp_path):
     root = tmp_path / "user"
     snapshots = CloudSnapshotStore(root=root)
     snapshots.save("QRZ", [_qso(), _qso("K1XYZ", "13:00:00")], {"coverage": "API_FULL_SYNC"})
@@ -72,9 +72,10 @@ def test_hrdlog_plan_explains_all_unsupported_missing_records(tmp_path):
     ))
     plan = IntegrityService(workspace=workspace, store=IntegrityStore(root=root)).reconcile_plan("HRDLOG")
     assert plan["missing_total"] == 2
-    assert plan["blocked"] == 2
-    assert plan["blocked_reasons"] == {"WRITE_NOT_SUPPORTED": 2}
-    assert plan["logical_ids"] == []
+    assert plan["blocked"] == 0
+    assert plan["selected"] == 2
+    assert len(plan["logical_ids"]) == 2
+    assert plan["ready"] is True
 
 
 def test_reference_export_contains_only_qrz(tmp_path):

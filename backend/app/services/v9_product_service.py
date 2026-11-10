@@ -45,9 +45,12 @@ class V9ProductService(V8OnlineService):
             return self.snapshots.summary("HRD").get("downloaded_at") is not None
         return super()._configured(provider)
 
-    def _capabilities(self, provider: str) -> Dict[str, bool]:
+    def _capabilities(self, provider: str) -> Dict[str, Any]:
         if provider == "HRD":
-            return {"read": True, "add": False, "update": False, "delete": False}
+            return {
+                "read": True, "add": False, "update": False, "delete": False,
+                "update_fields": [], "write_mode": "local_adif_read_only",
+            }
         return super()._capabilities(provider)
 
     def status(self) -> Dict[str, Any]:
