@@ -225,8 +225,9 @@ class ADIFComparisonService:
         # Do not assume generic PSK means PSK31 when either datum is missing.
         psk_generic_alias = (
             not mode_ok and self._generic_psk_specific_pair(a, b)
-            and time_diff is not None and time_diff <= 2
-            and freq_diff is not None and freq_diff <= min(tolerance, 1000)
+            and a.band and b.band and a.band == b.band
+            and time_diff is not None and time_diff <= (2 if freq_diff is not None else 0)
+            and (freq_diff is None or freq_diff <= min(tolerance, 1000))
         )
         if psk_generic_alias:
             mode_ok = True
