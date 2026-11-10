@@ -187,10 +187,11 @@ class ADIFComparisonService:
         evidence is required in _candidate before automatic matching.
         """
         modes = {a.operating_mode or "", b.operating_mode or ""}
-        return len(modes) == 2 and "PSK" in modes and any(
-            mode.startswith(("PSK", "QPSK")) and mode != "PSK"
-            for mode in modes
-        )
+        submodes = {
+            "PSK31", "PSK63", "PSK125", "PSK250", "PSK500",
+            "QPSK31", "QPSK63", "QPSK125", "QPSK250", "QPSK500",
+        }
+        return len(modes) == 2 and "PSK" in modes and bool(modes & submodes)
 
     def _freq_tolerance(self, a: QSO, b: QSO) -> int:
         family = a.mode_family if a.mode_family == b.mode_family else (a.mode_family or b.mode_family)
