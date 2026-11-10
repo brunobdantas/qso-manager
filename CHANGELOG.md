@@ -176,3 +176,16 @@ The project follows semantic versioning for production releases.
 - QRZ arbitrary replacement remains unavailable outside the audited QSL workflow.
 - Ambiguous matches, missing dates and collisions are never auto-written.
 
+## [1.1.2] - 2026-11-10
+
+### Saneamento dos logbooks e segurança operacional
+
+- QRZ exibido como referência, separado da união observada e de registros externos não pareados.
+- Uma pendência por QSO, com múltiplos tipos agrupados; QSL e metadados informativos não entram no contador acionável.
+- Normalização de acentos, pontuação e espaços em nome, QTH e comentário; severidade alta para RST incompatível em modos digitais.
+- Escopo persistente por fonte, com HRD local fora da comparação por padrão sem apagar seu ADIF.
+- Plano de conciliação sem pré-seleção e com total de faltantes, elegíveis, bloqueados e motivos.
+- Backup fiel do snapshot QRZ como padrão e união bruta claramente separada para auditoria.
+- Análise QSL sob demanda para reduzir o custo da inicialização.
+- Instalador, pacote portátil e checksums produzidos pela mesma esteira Windows validada.
+

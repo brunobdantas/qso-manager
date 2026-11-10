@@ -74,11 +74,20 @@ if ASSETS_DIR.exists():
     app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 
+def _spa_index_response(index):
+    # The JS/CSS filenames are content-hashed, but index.html must never keep
+    # pointing a just-upgraded installation at the previous release assets.
+    return FileResponse(index, headers={
+        "Cache-Control": "no-store, max-age=0",
+        "Pragma": "no-cache",
+    })
+
+
 @app.get("/", include_in_schema=False)
 def root():
     index = FRONTEND_DIST / "index.html"
     if index.exists():
-        return FileResponse(index)
+        return _spa_index_response(index)
     return {
         "name": f"{APP_NAME} API",
         "version": __version__,
@@ -94,7 +103,7 @@ def spa_fallback(full_path: str):
         raise HTTPException(status_code=404, detail="API endpoint not found")
     index = FRONTEND_DIST / "index.html"
     if index.exists():
-        return FileResponse(index)
+        return _spa_index_response(index)
     raise HTTPException(status_code=404, detail="Frontend not built.")
 
 

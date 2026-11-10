@@ -8,7 +8,9 @@ search/filter/sort/export primitives used by the desktop UI.
 from __future__ import annotations
 
 import hashlib
+import re
 import threading
+import unicodedata
 from collections import defaultdict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
@@ -16,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from ..adapters.cloud_logs import PROVIDERS, records_to_adif
 from .cloud_hub_fast_service import CloudHubService
 from .fast_adif_comparison_service import FastADIFComparisonService
+from .source_scope_store import SourceScopeStore
 
 
 class QSOManagerWorkspace:
@@ -41,12 +44,20 @@ class QSOManagerWorkspace:
     def __init__(self, hub: Optional[CloudHubService] = None) -> None:
         self.hub = hub or CloudHubService()
         self.comparator = FastADIFComparisonService()
+        self.scopes = SourceScopeStore(root=self.hub.snapshots.root.parent)
+
+    def active_providers(self) -> Tuple[str, ...]:
+        return tuple(
+            provider for provider in self.PROVIDER_ORDER
+            if self.scopes.get(provider) == SourceScopeStore.ACTIVE
+        )
 
     def _signature(self) -> Tuple[Any, ...]:
         values: List[Any] = []
         for provider in self.PROVIDER_ORDER:
             summary = self.hub.snapshots.summary(provider)
             values.extend((provider, summary.get("downloaded_at"), summary.get("records")))
+        values.extend(("SOURCE_SCOPES", *self.scopes.signature()))
         return tuple(values)
 
     @staticmethod
@@ -56,6 +67,15 @@ class QSOManagerWorkspace:
     @staticmethod
     def _upper(value: Any) -> str:
         return QSOManagerWorkspace._text(value).upper()
+
+    @staticmethod
+    def _comparison_value(field: str, value: Any) -> str:
+        text = QSOManagerWorkspace._upper(value)
+        if field not in {"NAME", "QTH", "COMMENT"}:
+            return text
+        text = unicodedata.normalize("NFKD", text)
+        text = "".join(ch for ch in text if not unicodedata.combining(ch))
+        return re.sub(r"[^A-Z0-9]+", " ", text).strip()
 
     @staticmethod
     def _mode(record: Dict[str, Any]) -> str:
@@ -131,7 +151,7 @@ class QSOManagerWorkspace:
                     continue
                 value = rows[index].get(field)
                 if value not in (None, ""):
-                    values.add(self._upper(value))
+                    values.add(self._comparison_value(field, value))
             if len(values) > 1:
                 if field == "GRIDSQUARE":
                     # GF05 is a valid coarse locator for GF05TG; differing
@@ -145,13 +165,24 @@ class QSOManagerWorkspace:
                 differences.append(field)
         return differences
 
+    @staticmethod
+    def _difference_severity(mode: str, fields: Sequence[str]) -> str:
+        fields = set(fields)
+        digital_signal_modes = {"FT8", "FT4", "JT65", "JT9", "WSPR", "JS8", "Q65", "MSK144"}
+        if mode in digital_signal_modes and fields.intersection({"RST_SENT", "RST_RCVD"}):
+            return "HIGH"
+        if fields.intersection({"RST_SENT", "RST_RCVD", "GRIDSQUARE", "STATE", "CNTY", "COUNTRY"}):
+            return "REVIEW"
+        return "INFO"
+
     def _build_rows(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+        active = self.active_providers()
         snapshots: Dict[str, List[Dict[str, Any]]] = {
-            provider: list((self.hub.snapshots.load(provider).get("records") or []))
+            provider: list((self.hub.snapshots.load(provider).get("records") or [])) if provider in active else []
             for provider in self.PROVIDER_ORDER
         }
         available = [
-            provider for provider in self.PROVIDER_ORDER
+            provider for provider in active
             if self.hub.snapshots.summary(provider).get("downloaded_at") is not None
         ]
         normalized = {
@@ -175,7 +206,7 @@ class QSOManagerWorkspace:
 
         orphan_buckets: Dict[Tuple[str, str], List[Dict[str, Any]]] = defaultdict(list)
 
-        for provider in self.PROVIDER_ORDER:
+        for provider in active:
             if provider == "QRZ":
                 continue
             provider_norm = normalized.get(provider) or []
@@ -239,6 +270,7 @@ class QSOManagerWorkspace:
             }
             missing_in = [provider for provider in available if provider not in refs]
             differences = self._field_differences(refs, snapshots)
+            difference_severity = self._difference_severity(mode, differences)
             confirmation_sources = self._confirmation_sources(refs, snapshots)
             duplicate = any((provider, index) in duplicate_refs for provider, index in refs.items())
             logical_id = self._logical_id(refs, canonical)
@@ -276,6 +308,7 @@ class QSOManagerWorkspace:
                 "duplicate": duplicate,
                 "difference_fields": differences,
                 "difference_count": len(differences),
+                "difference_severity": difference_severity,
                 "confirmation_sources": confirmation_sources,
                 "confirmed": bool(confirmation_sources),
                 "search_blob": search_blob,
@@ -291,7 +324,7 @@ class QSOManagerWorkspace:
 
         rows.sort(key=lambda row: (row.get("date") or "", row.get("time") or "", row.get("call") or ""), reverse=True)
         options = {
-            "providers": list(self.PROVIDER_ORDER),
+            "providers": list(active),
             "available_providers": available,
             "bands": sorted(bands),
             "modes": sorted(modes),
@@ -319,9 +352,15 @@ class QSOManagerWorkspace:
 
     def options(self) -> Dict[str, Any]:
         rows, options = self._cached()
+        reference_qsos = sum(1 for row in rows if "QRZ" in row["providers"])
+        external_observations = len(rows) - reference_qsos
         summary = {
             "logical_qsos": len(rows),
-            "qrz_missing": sum(1 for row in rows if "QRZ" not in row["providers"]),
+            "observed_logical_qsos": len(rows),
+            "reference_qsos": reference_qsos,
+            "master_qsos": reference_qsos,
+            "external_observations": external_observations,
+            "qrz_missing": external_observations,
             "multi_source": sum(1 for row in rows if row["provider_count"] >= 2),
             "duplicates": sum(1 for row in rows if row["duplicate"]),
             "with_differences": sum(1 for row in rows if row["difference_count"]),

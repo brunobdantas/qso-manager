@@ -14,6 +14,7 @@ from typing import Any, Dict, Optional
 
 from .cloud_snapshot_store import CloudSnapshotStore
 from ..core.version import __version__
+from .source_scope_store import SourceScopeStore
 
 
 class BootstrapCache:
@@ -26,6 +27,8 @@ class BootstrapCache:
 
     def signature(self) -> list[list[Any]]:
         signatures: list[list[Any]] = [["APP_VERSION", __version__, None]]
+        scope_signature = SourceScopeStore(root=self.snapshots.root.parent).signature()
+        signatures.append(["SOURCE_SCOPES", scope_signature[0], scope_signature[1]])
         for provider in self.PROVIDERS:
             path = self.snapshots._path(provider)
             try:

@@ -5,9 +5,19 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.1.1** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.1.2** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.1.1. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.1.2. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+
+## Melhorias v1.1.2 — saneamento e segurança operacional
+
+- A visão geral separa os QSOs do QRZ das observações externas ainda sem pareamento; a união deixa de ser apresentada como log consolidado.
+- Pendências são agrupadas por QSO e confirmações QSL não inflam mais a fila de problemas.
+- Diferenças cadastrais de baixa relevância são normalizadas e separadas dos conflitos que exigem revisão.
+- Fontes podem ficar fora do escopo sem apagar credenciais ou snapshots; o HRD local inicia fora do escopo.
+- Planos de conciliação abrem sem seleção automática e explicam todos os bloqueios.
+- O backup padrão exporta fielmente o QRZ; a união bruta fica disponível apenas para auditoria, com aviso explícito.
+- A análise pesada de QSL passa a ser carregada sob demanda, reduzindo o tempo de abertura.
 
 ## Correção v1.1.1 — Club Log, PSK e falsos alertas
 
