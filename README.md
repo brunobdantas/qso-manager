@@ -5,9 +5,17 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.1.0** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.1.1** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.1.0. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+> **Status:** Windows 11 é o alvo de produção da v1.1.1. O aplicativo Android é um companion em preview e não executa a rotina de escrita eQSL → QRZ.
+
+## Correção v1.1.1 — Club Log, PSK e falsos alertas
+
+- Um Club Log que exporta `MODE=PSK` pode representar o mesmo QSO que `MODE=PSK31` no QRZ, quando indicativo, data, banda e segundo UTC coincidem e há evidência de frequência compatível; se o Club Log não informar frequência, a exigência é o mesmo segundo UTC.
+- Se o PSK genérico puder corresponder a mais de um submodo específico, o caso exige revisão humana. PSK31/PSK63, FT8/FT4 e contatos de datas distintas continuam separados.
+- `GF05` e `GF05TG` representam o mesmo grid com granularidades diferentes; deixa de ser uma divergência de localização.
+- Diferenças em `QSL_SENT`/`QSL_RCVD` são tratadas por canal de QSL, não como conflito cadastral entre eQSL e QRZ.
+- A versão atualizada invalida os caches de análise anteriores; **não é necessário apagar os logbooks nem reenviar contatos**.
 
 ## Melhorias v1.1.0 — Central de Integridade
 
