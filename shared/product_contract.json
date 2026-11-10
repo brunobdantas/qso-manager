@@ -1,6 +1,6 @@
 {
   "product": "PU2BRU QSO Manager",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "navigation": [
     {
       "id": "overview",
@@ -35,6 +35,9 @@
     "missing_source_detection",
     "field_divergence_detection",
     "duplicate_detection",
+    "persistent_source_scope",
+    "qrz_reference_backup",
+    "lazy_qsl_analysis",
     "qsl_evidence_eqsl",
     "qsl_evidence_lotw",
     "eqsl_qrz_safe_sync",

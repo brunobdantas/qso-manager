@@ -2,6 +2,7 @@ from app.services.cloud_hub_fast_service import CloudHubService
 from app.services.cloud_snapshot_store import CloudSnapshotStore
 from app.services.credential_store import CredentialStore
 from app.services.qso_manager_workspace import QSOManagerWorkspace
+from app.services.source_scope_store import SourceScopeStore
 from app.adapters.cloud_logs import CloudProviderError
 import pytest
 
@@ -79,6 +80,7 @@ def test_hrd_adif_becomes_persistent_comparison_source(tmp_path):
     assert result["pairwise"]["HRD"]["summary"]["records_b"] == 1
     assert result["qrz_stale_candidates"][0]["sources"] == ["HRD"]
     assert hub.search("K1NEW")["items"][0]["provider"] == "HRD"
+    SourceScopeStore(root=snapshots.root.parent).set("HRD", "ACTIVE")
     workspace = QSOManagerWorkspace(hub=hub)
     manager_rows = workspace.query(q="K1NEW")["items"]
     assert manager_rows[0]["providers"] == ["HRD"]

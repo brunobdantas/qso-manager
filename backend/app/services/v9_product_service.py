@@ -11,12 +11,13 @@ import time
 
 from typing import Any, Dict, Optional
 
-from ..adapters.cloud_logs import CloudProviderError
+from ..adapters.cloud_logs import CloudProviderError, records_to_adif
 from ..adif.parser import ADIFParser
 from ..core.version import __version__
 from .eqsl_qrz_sync_service import EqslQrzSyncService
 from .bootstrap_cache_service import BootstrapCache
 from .qso_manager_workspace import QSOManagerWorkspace
+from .source_scope_store import SourceScopeStore
 from .v8_online_service import V8OnlineService
 
 
@@ -55,6 +56,7 @@ class V9ProductService(V8OnlineService):
         # make HRD safe while this subclass changes DISPLAY_ORDER.
         base = super().status()
         rows = []
+        scopes = SourceScopeStore(root=self.snapshots.root.parent)
         for row in base.get("providers", []):
             if row.get("provider") == "HRD":
                 summary = self.snapshots.summary("HRD")
@@ -69,6 +71,27 @@ class V9ProductService(V8OnlineService):
                     "source_kind": "local_adif",
                     "comparison_role": "log",
                 }
+            provider = row.get("provider")
+            comparison_role = row.get("comparison_role")
+            scope = scopes.get(provider) if comparison_role == "log" else SourceScopeStore.ACTIVE
+            configured = bool(row.get("configured"))
+            snapshot_ready = bool((row.get("snapshot") or {}).get("downloaded_at"))
+            capabilities = row.get("capabilities") or {}
+            row = {
+                **row,
+                "scope": scope,
+                "participates": scope == SourceScopeStore.ACTIVE,
+                "read_state": (
+                    "OUT_OF_SCOPE" if scope != SourceScopeStore.ACTIVE
+                    else "READY" if snapshot_ready
+                    else "NOT_LOADED"
+                ),
+                "write_state": (
+                    "UNSUPPORTED" if not any(capabilities.get(k) for k in ("add", "update", "delete"))
+                    else "AVAILABLE" if configured
+                    else "NOT_CONFIGURED"
+                ),
+            }
             rows.append(row)
         order = {name: i for i, name in enumerate(self.DISPLAY_ORDER)}
         rows.sort(key=lambda row: order.get(row.get("provider"), 999))
@@ -83,6 +106,19 @@ class V9ProductService(V8OnlineService):
             "capability_parity": False,
             "windows_production_ready": True,
             "android_stage": "preview",
+        }
+
+    def set_source_scope(self, provider: str, scope: str) -> Dict[str, Any]:
+        provider = self._normalize_provider(provider)
+        if provider not in self.LOG_PROVIDERS:
+            raise CloudProviderError("Somente fontes de log participam do escopo de comparação")
+        saved = SourceScopeStore(root=self.snapshots.root.parent).set(provider, scope)
+        QSOManagerWorkspace.invalidate_cache()
+        return {
+            "ok": True,
+            "provider": provider,
+            "scope": saved,
+            "participates": saved == SourceScopeStore.ACTIVE,
         }
 
     def configure(self, provider: str, values: Dict[str, Any]) -> Dict[str, Any]:
@@ -171,6 +207,17 @@ class V9ProductService(V8OnlineService):
         """Apply the strict eQSL -> QRZ plan; dry-run unless confirm=True."""
         return self._eqsl_qrz_service().apply(confirm=confirm, limit=limit)
 
+    def export_reference_adif(self) -> Dict[str, Any]:
+        records = self.snapshots.load("QRZ").get("records") or []
+        if not records:
+            raise CloudProviderError("Atualize o QRZ antes de gerar o backup de referência")
+        return {
+            "provider": "QRZ",
+            "records": len(records),
+            "content": records_to_adif(records),
+            "filename": f"PU2BRU-QRZ-REFERENCIA-v{self.VERSION}.adi",
+        }
+
     def bootstrap(self) -> Dict[str, Any]:
         """Use persistent read-only analysis cache when snapshots are unchanged.
 
@@ -191,9 +238,14 @@ class V9ProductService(V8OnlineService):
             signature = cache.signature()
             workspace = self._workspace().options()
             after_workspace = time.monotonic()
-            qsl = self.qsl_analysis()
+            qsl = {
+                "ready": None,
+                "lazy": True,
+                "summary": {"confirmed_qsos": workspace.get("summary", {}).get("confirmed", 0)},
+                "proposals": [],
+            }
             after_qsl = time.monotonic()
-            issues = self.issues(limit=50, qsl_result=qsl)
+            issues = self.issues(limit=50)
             dashboard_issues = {**issues, "items": issues["items"][:20]}
             dashboard = {
                 "version": self.VERSION,
@@ -210,7 +262,7 @@ class V9ProductService(V8OnlineService):
             }
             cache.save(payload, signature)
             logging.getLogger(__name__).info(
-                "bootstrap: workspace %.2fs, qsl %.2fs, issues %.2fs, total %.2fs",
+                "bootstrap: workspace %.2fs, lazy-qsl %.2fs, issues %.2fs, total %.2fs",
                 after_workspace-started, after_qsl-after_workspace,
                 time.monotonic()-after_qsl, time.monotonic()-started,
             )

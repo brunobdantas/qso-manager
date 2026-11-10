@@ -30,7 +30,7 @@ def test_v9_status_is_unified_and_includes_hrd(tmp_path: Path):
     assert providers["HRD"]["credentials"] == {}
 
 
-def test_hrd_adif_is_part_of_the_same_workspace(tmp_path: Path):
+def test_hrd_adif_is_preserved_but_out_of_scope_until_enabled(tmp_path: Path):
     s = service(tmp_path)
     result = s.import_local_adif(
         "HRD",
@@ -43,6 +43,11 @@ def test_hrd_adif_is_part_of_the_same_workspace(tmp_path: Path):
     hrd = next(row for row in status["providers"] if row["provider"] == "HRD")
     assert hrd["configured"] is True
     assert hrd["snapshot"]["records"] == 1
+    assert hrd["scope"] == "OUT_OF_SCOPE"
+    assert hrd["participates"] is False
+    log = s.log(page=1, page_size=10)
+    assert log["total"] == 0
+    s.set_source_scope("HRD", "ACTIVE")
     log = s.log(page=1, page_size=10)
     assert log["total"] == 1
     assert log["items"][0]["call"] == "K1ABC"
@@ -77,7 +82,7 @@ def test_bootstrap_and_diagnostics_do_not_expose_secret_values(tmp_path: Path):
     assert "super-secret-key" not in str(diagnostic)
 
 
-def test_bootstrap_reuses_single_qsl_analysis(tmp_path: Path, monkeypatch):
+def test_bootstrap_defers_qsl_analysis_until_requested(tmp_path: Path, monkeypatch):
     s = service(tmp_path)
     calls = []
     original = s.qsl_analysis
@@ -88,7 +93,8 @@ def test_bootstrap_reuses_single_qsl_analysis(tmp_path: Path, monkeypatch):
 
     monkeypatch.setattr(s, "qsl_analysis", counted_qsl)
     boot = s.bootstrap()
-    assert len(calls) == 1
+    assert len(calls) == 0
+    assert boot["qsl"]["lazy"] is True
     assert boot["dashboard"]["qsl_summary"] == boot["qsl"]["summary"]
     assert boot["dashboard"]["issues"]["total"] == boot["issues"]["total"]
     assert boot["dashboard"]["issues"]["items"] == boot["issues"]["items"][:20]

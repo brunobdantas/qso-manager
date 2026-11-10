@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from ..adapters.cloud_logs import CloudProviderError
 from ..services.award_master_service import AwardMasterError, AwardMasterService
 from ..services.parallel_sync_service import parallel_sync
+from ..services.qso_manager_activity import QSOManagerActivityStore
 from ..services.v9_product_service import V9ProductService
 
 router = APIRouter(prefix="/api/product", tags=["product"])
@@ -33,6 +34,10 @@ class HRDLogPushRequest(BaseModel):
 class EqslQrzApplyRequest(BaseModel):
     confirm: bool = False
     limit: int = Field(default=500, ge=1, le=500)
+
+
+class SourceScopeRequest(BaseModel):
+    scope: str
 
 
 def _run(fn):
@@ -74,6 +79,25 @@ def issues(limit: int = Query(default=250, ge=1, le=1000)):
 @router.get("/qsl")
 def qsl():
     return _run(lambda: V9ProductService().qsl_analysis())
+
+
+@router.get("/export/reference")
+def export_reference():
+    result = _run(lambda: V9ProductService().export_reference_adif())
+    QSOManagerActivityStore().append(
+        "BACKUP",
+        f"Backup fiel do QRZ com {result['records']} QSO(s)",
+        {"provider": "QRZ", "records": result["records"], "filename": result["filename"]},
+    )
+    return Response(
+        content=result["content"],
+        media_type="text/plain; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="{result["filename"]}"',
+            "X-QSO-Records": str(result["records"]),
+            "X-QSO-Source": result["provider"],
+        },
+    )
 
 
 @router.get("/qsl/eqsl-qrz/plan")
@@ -186,6 +210,11 @@ def sync_all_status(job_id: str):
 @router.put("/sources/{provider}/adif")
 def import_adif(provider: str, request: ADIFRequest):
     return _run(lambda: V9ProductService().import_local_adif(provider, request.content, request.filename))
+
+
+@router.put("/sources/{provider}/scope")
+def set_source_scope(provider: str, request: SourceScopeRequest):
+    return _run(lambda: V9ProductService().set_source_scope(provider, request.scope))
 
 
 @router.delete("/sources/{provider}/snapshot")

@@ -391,78 +391,63 @@ class V8OnlineService:
 
     def issues(self, limit: int = 100, qsl_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         rows, _ = self._workspace()._cached()
+        active_logs = set(self._workspace().active_providers())
         configured_logs = {
             p for p in self.LOG_PROVIDERS
-            if self.snapshots.summary(p).get("downloaded_at") is not None
+            if p in active_logs and self.snapshots.summary(p).get("downloaded_at") is not None
         }
         issues = []
+        informational = 0
+        counts = {"missing": 0, "differences": 0, "duplicates": 0}
         for row in rows:
             missing = [p for p in row.get("missing_in", []) if p in configured_logs]
+            types = []
+            messages = []
             if missing:
-                issues.append({
-                    "type": "MISSING",
-                    "severity": "warning",
-                    "logical_id": row["logical_id"],
-                    "call": row["call"],
-                    "date": row["date"],
-                    "time": row["time"],
-                    "band": row["band"],
-                    "mode": row["mode"],
-                    "message": "Ausente em " + ", ".join(missing),
-                    "sources": row.get("providers", []),
-                    "missing_in": missing,
-                })
+                types.append("MISSING")
+                messages.append("Ausente em " + ", ".join(missing))
+                counts["missing"] += 1
             if row.get("difference_count"):
-                issues.append({
-                    "type": "DIFFERENCE",
-                    "severity": "review",
-                    "logical_id": row["logical_id"],
-                    "call": row["call"],
-                    "date": row["date"],
-                    "time": row["time"],
-                    "band": row["band"],
-                    "mode": row["mode"],
-                    "message": "Campos divergentes: " + ", ".join(row.get("difference_fields") or []),
-                    "sources": row.get("providers", []),
-                })
+                if row.get("difference_severity") == "INFO" and not missing and not row.get("duplicate"):
+                    informational += 1
+                else:
+                    types.append("DIFFERENCE")
+                    messages.append("Campos divergentes: " + ", ".join(row.get("difference_fields") or []))
+                    counts["differences"] += 1
             if row.get("duplicate"):
-                issues.append({
-                    "type": "DUPLICATE",
-                    "severity": "review",
-                    "logical_id": row["logical_id"],
-                    "call": row["call"],
-                    "date": row["date"],
-                    "time": row["time"],
-                    "band": row["band"],
-                    "mode": row["mode"],
-                    "message": "Duplicidade provável",
-                    "sources": row.get("providers", []),
-                })
-        qsl = qsl_result if qsl_result is not None else self.qsl_analysis()
-        for proposal in qsl.get("proposals") or []:
-            q = proposal.get("qso") or {}
+                types.append("DUPLICATE")
+                messages.append("Duplicidade provável")
+                counts["duplicates"] += 1
+            if not types:
+                continue
+            severity = "HIGH" if row.get("difference_severity") == "HIGH" else "REVIEW"
             issues.append({
-                "type": "QSL",
-                "severity": "info",
-                "call": q.get("call"),
-                "date": q.get("date"),
-                "time": q.get("time"),
-                "band": q.get("band"),
-                "mode": q.get("mode"),
-                "message": f"Confirmação {proposal.get('service')} encontrada",
-                "sources": proposal.get("sources") or [],
+                "type": types[0],
+                "types": types,
+                "severity": severity,
+                "logical_id": row["logical_id"],
+                "call": row["call"],
+                "date": row["date"],
+                "time": row["time"],
+                "band": row["band"],
+                "mode": row["mode"],
+                "message": " · ".join(messages),
+                "sources": row.get("providers", []),
+                "missing_in": missing,
+                "difference_fields": row.get("difference_fields") or [],
             })
         limit = max(1, min(int(limit), 1000))
+        qsl_detected = sum(1 for row in rows if row.get("confirmed"))
         return {
             "total": len(issues),
             "counts": {
-                "missing": sum(1 for x in issues if x["type"] == "MISSING"),
-                "differences": sum(1 for x in issues if x["type"] == "DIFFERENCE"),
-                "duplicates": sum(1 for x in issues if x["type"] == "DUPLICATE"),
-                "qsl": sum(1 for x in issues if x["type"] == "QSL"),
+                **counts,
+                "informational": informational,
+                "qsl": qsl_detected,
             },
             "items": issues[:limit],
             "truncated": len(issues) > limit,
+            "definition": "Um item por QSO; QSL e diferenças somente informativas não entram nas pendências.",
         }
 
     def dashboard(self) -> Dict[str, Any]:

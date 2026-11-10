@@ -252,10 +252,12 @@ class IntegrityService:
                 parts.append((provider, stat.st_mtime_ns, stat.st_size))
             except FileNotFoundError:
                 parts.append((provider, None, None))
+        parts.append(("SOURCE_SCOPES", *self.workspace.scopes.signature()))
         return _hash(parts)
 
     def _case(self, kind: str, provider: str, row: dict, *, reason: str, confidence: str = "REVIEW",
-              field: str = "", before: Any = None, after: Any = None, actionable: bool = False) -> dict:
+              field: str = "", before: Any = None, after: Any = None, actionable: bool = False,
+              severity: str = "REVIEW") -> dict:
         identity = _fingerprint(row)
         key = _hash(kind, provider, identity, field, row.get("source_records", {}).get(provider, {}).get("external_id"))
         return {
@@ -267,12 +269,14 @@ class IntegrityService:
             "reason": reason, "confidence": confidence, "field": field,
             "reference_value": before, "provider_value": after,
             "actionable": bool(actionable),
+            "severity": severity,
         }
 
     def _analyze(self) -> dict:
         rows, _ = self.workspace._cached()
         summaries = {p: self.workspace.hub.snapshots.summary(p) for p in ("QRZ", *PROVIDERS)}
-        full = {p for p in PROVIDERS if
+        active_providers = set(self.workspace.active_providers())
+        full = {p for p in PROVIDERS if p in active_providers and
                 summaries[p].get("downloaded_at") is not None and
                 (summaries[p].get("metadata") or {}).get("coverage") in FULL_COVERAGE}
         caps = {p: self.workspace._capabilities(p) for p in PROVIDERS}
@@ -302,7 +306,8 @@ class IntegrityService:
                         "matched": 0, "missing": 0, "extra": 0,
                         "different": 0, "duplicates": 0, "blocked": 0,
                         "loaded": p in full, "coverage": (summaries[p].get("metadata") or {}).get("coverage"),
-                        "stale": is_stale(summaries[p].get("downloaded_at")) or is_stale(summaries["QRZ"].get("downloaded_at")),
+                        "scope": "ACTIVE" if p in active_providers else "OUT_OF_SCOPE",
+                        "stale": p in active_providers and (is_stale(summaries[p].get("downloaded_at")) or is_stale(summaries["QRZ"].get("downloaded_at"))),
                         "last_update": summaries[p].get("downloaded_at")} for p in PROVIDERS}
         cases = []
         for row in rows:
@@ -329,17 +334,23 @@ class IntegrityService:
                         except (ValueError, TypeError):
                             nearby = True
                         can_add = can_add and not nearby
-                        reason = ("Contato semelhante em até 5 minutos no provedor; conferir horário antes de incluir"
-                                  if nearby else "QSO do QRZ ausente neste snapshot completo")
+                        if row["duplicate"]:
+                            reason = "QSO associado a possível duplicidade; revisar os membros antes de incluir"
+                        elif nearby:
+                            reason = "Contato semelhante em até 5 minutos no provedor; conferir horário antes de incluir"
+                        else:
+                            reason = "QSO do QRZ ausente neste snapshot completo"
                         case = self._case("MISSING", provider, row, reason=reason,
-                                          confidence="HIGH" if can_add else "REVIEW", actionable=can_add)
+                                          confidence="HIGH" if can_add else "REVIEW", actionable=can_add,
+                                          severity="HIGH" if can_add else "REVIEW")
                         cases.append(case)
                     else:
                         counters[provider]["matched"] += 1
                         target = row["source_records"][provider]["record"]
                         differences = []
                         for field in COMPARE_FIELDS:
-                            qv, pv = _normalize(qrz.get(field)), _normalize(target.get(field))
+                            qv = self.workspace._comparison_value(field, qrz.get(field))
+                            pv = self.workspace._comparison_value(field, target.get(field))
                             if qv and pv and qv != pv:
                                 if field == "GRIDSQUARE" and (
                                     min(len(qv), len(pv)) >= 4 and
@@ -353,7 +364,8 @@ class IntegrityService:
                             for field, original, current in differences:
                                 cases.append(self._case(
                                     "DIFFERENCE", provider, row, reason="Divergência verificada entre QRZ e a fonte",
-                                    field=field, before=original, after=current))
+                                    field=field, before=original, after=current,
+                                    severity=self.workspace._difference_severity(row.get("mode") or "", [field])))
             else:
                 for provider in refs:
                     if provider in full:
@@ -413,7 +425,9 @@ class IntegrityService:
             metrics["accepted_cases"] = accepted_by_provider[provider]
             err = errors.get(provider, {})
             metrics["exception"] = err if err.get("active") else None
-            if not reference_present:
+            if metrics["scope"] == "OUT_OF_SCOPE":
+                metrics["state"] = "OUT_OF_SCOPE"
+            elif not reference_present:
                 metrics["state"] = "REFERENCE_MISSING"
             elif not metrics["loaded"]:
                 metrics["state"] = "NO_COMPLETE_SNAPSHOT"
@@ -428,9 +442,15 @@ class IntegrityService:
             else:
                 metrics["state"] = "DIVERGENT"
 
+        severity_counts = defaultdict(int)
+        for case in cases:
+            severity_counts[case.get("severity") or "REVIEW"] += 1
         summary = {"reference": "QRZ",
                    "reference_records": summaries["QRZ"].get("records") or 0,
                    "cases": len(cases), "by_kind": dict(by_kind),
+                   "by_severity": dict(severity_counts),
+                   "review_cases": severity_counts["HIGH"] + severity_counts["REVIEW"],
+                   "informational_cases": severity_counts["INFO"],
                    "providers": counters,
                    "note": "Ausências/excedentes baseados em snapshots completos, não em contagens líquidas. Candidatos ambíguos exigem revisão."}
         return {"signature": self.signature(), "summary": summary, "cases": cases}
@@ -466,19 +486,39 @@ class IntegrityService:
             raise ValueError("Provedor inválido")
         report = self._cached_analysis()
         state = report["summary"]["providers"][provider]
-        candidates = [
-            x for x in report["cases"] if x["provider"] == provider and
-            x["kind"] == "MISSING" and x["actionable"]
+        missing_cases = [
+            x for x in report["cases"] if x["provider"] == provider and x["kind"] == "MISSING"
         ]
+        candidates = [x for x in missing_cases if x["actionable"]]
+        blocked_reasons = defaultdict(int)
+        for case in missing_cases:
+            if case["actionable"]:
+                continue
+            if case.get("decision") in ("ACCEPT_EXCEPTION", "KEEP_SEPARATE", "RESOLVED"):
+                blocked_reasons["DECISION_RECORDED"] += 1
+            elif provider not in ASSISTED_WRITABLE or not self.workspace._capabilities(provider).get("add"):
+                blocked_reasons["WRITE_NOT_SUPPORTED"] += 1
+            elif state.get("stale"):
+                blocked_reasons["STALE_SNAPSHOT"] += 1
+            elif state.get("exception"):
+                blocked_reasons["PROVIDER_ERROR"] += 1
+            elif "5 minutos" in str(case.get("reason") or ""):
+                blocked_reasons["NEARBY_MATCH"] += 1
+            elif "duplicidade" in str(case.get("reason") or "").lower():
+                blocked_reasons["DUPLICATE_RISK"] += 1
+            else:
+                blocked_reasons["NOT_ACTIONABLE"] += 1
         # No silent delete/overwrite. All proposals are QRZ -> provider inserts.
         selected = candidates[:min(max(limit, 1), 1000)]
         ids = list(dict.fromkeys(c["logical_id"] for c in selected))
         return {
             "source": "QRZ", "target": provider, "action": "PUBLISH",
             "signature": report["signature"], "coverage": state["coverage"],
+            "missing_total": len(missing_cases),
             "total_candidates": len(candidates), "selected": len(ids),
             "logical_ids": ids, "sample": selected,
-            "blocked": state["blocked"],
+            "blocked": len(missing_cases) - len(candidates),
+            "blocked_reasons": dict(blocked_reasons),
             "ready": bool(provider in ASSISTED_WRITABLE and state["loaded"] and not state["stale"] and self.workspace._capabilities(provider).get("add")),
             "policy": "Prévia obrigatória; somente inclusões de alta confiança, sem exclusões ou mudanças automáticas",
         }
