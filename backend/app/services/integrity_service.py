@@ -341,6 +341,12 @@ class IntegrityService:
                         for field in COMPARE_FIELDS:
                             qv, pv = _normalize(qrz.get(field)), _normalize(target.get(field))
                             if qv and pv and qv != pv:
+                                if field == "GRIDSQUARE" and (
+                                    min(len(qv), len(pv)) >= 4 and
+                                    len(qv) % 2 == 0 and len(pv) % 2 == 0 and
+                                    (qv.startswith(pv) or pv.startswith(qv))
+                                ):
+                                    continue  # GF05 and GF05TG are the same base locator.
                                 differences.append((field, qv, pv))
                         if differences:
                             counters[provider]["different"] += 1
