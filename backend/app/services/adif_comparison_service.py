@@ -178,6 +178,20 @@ class ADIFComparisonService:
             return True
         return a.mode_family == b.mode_family == "SSB"
 
+    @staticmethod
+    def _generic_psk_specific_pair(a: QSO, b: QSO) -> bool:
+        """A provider may export only MODE=PSK without PSK31 SUBMODE.
+
+        Never equate two different specific submodes such as PSK31 and PSK63.
+        A generic/specific pair is only a *candidate*; tight frequency/time
+        evidence is required in _candidate before automatic matching.
+        """
+        modes = {a.operating_mode or "", b.operating_mode or ""}
+        return len(modes) == 2 and "PSK" in modes and any(
+            mode.startswith(("PSK", "QPSK")) and mode != "PSK"
+            for mode in modes
+        )
+
     def _freq_tolerance(self, a: QSO, b: QSO) -> int:
         family = a.mode_family if a.mode_family == b.mode_family else (a.mode_family or b.mode_family)
         if family == "CW":
@@ -203,14 +217,24 @@ class ADIFComparisonService:
             freq_diff = abs(a.freq_hz - b.freq_hz)
 
         mode_ok = self._mode_compatible(a, b)
-        # Distinct digital modes are distinct QSOs even at identical UTC time
-        # and frequency. Only mode-label synonyms (e.g. MFSK/SUBMODE=FT4)
-        # may be paired through the normalized operating_mode.
-        digital = {"FT8", "FT4", "JT65", "JT9", "RTTY", "PSK31", "JS8", "WSPR"}
+        tolerance = self._freq_tolerance(a, b)
+        # Club Log and other services sometimes discard the PSK submode:
+        # PSK31 -> MODE=PSK with no SUBMODE. Pair only with precise independent
+        # evidence (same UTC second to 2s and frequency within 1 kHz).
+        # Do not assume generic PSK means PSK31 when either datum is missing.
+        psk_generic_alias = (
+            not mode_ok and self._generic_psk_specific_pair(a, b)
+            and time_diff is not None and time_diff <= 2
+            and freq_diff is not None and freq_diff <= min(tolerance, 1000)
+        )
+        if psk_generic_alias:
+            mode_ok = True
+        # Different *specific* digital modes (FT8 vs FT4, PSK31 vs PSK63)
+        # remain distinct even at exactly the same time and frequency.
+        digital = {"FT8", "FT4", "JT65", "JT9", "RTTY", "PSK31", "PSK63", "JS8", "WSPR"}
         if (not mode_ok and a.operating_mode and b.operating_mode and
                 (a.operating_mode in digital or b.operating_mode in digital)):
             return None
-        tolerance = self._freq_tolerance(a, b)
         freq_ok = freq_diff is None or freq_diff <= tolerance
 
         # A very tight call/date/time/frequency match can still be the same QSO
@@ -248,6 +272,7 @@ class ADIFComparisonService:
             "time_diff_seconds": time_diff,
             "freq_diff_hz": freq_diff,
             "mode_compatible": mode_ok,
+            "mode_generic_alias": psk_generic_alias,
             "score": round(score, 1),
         }
 
@@ -277,10 +302,24 @@ class ADIFComparisonService:
                 mode_rank = 0 if evidence["mode_compatible"] else 1
                 auto.append(((time_rank, mode_rank, freq_rank, -evidence["score"]), left, right, evidence))
 
+        # If generic PSK could match multiple equally plausible specific-mode
+        # contacts, leave it for human review rather than pairing arbitrarily.
+        generic_counts_a: Dict[int, int] = defaultdict(int)
+        generic_counts_b: Dict[int, int] = defaultdict(int)
+        for _, left, right, evidence in auto:
+            if evidence.get("mode_generic_alias"):
+                generic_counts_a[left.index] += 1
+                generic_counts_b[right.index] += 1
+
         used_a, used_b = set(), set()
         matched: List[Tuple[QSO, QSO, Dict[str, Any]]] = []
         for _, left, right, evidence in sorted(auto, key=lambda row: row[0]):
             if left.index in used_a or right.index in used_b:
+                continue
+            if evidence.get("mode_generic_alias") and (
+                generic_counts_a[left.index] > 1 or generic_counts_b[right.index] > 1
+            ):
+                review.append((left, right, {**evidence, "kind": "review", "reason": "ambiguous_generic_psk"}))
                 continue
             if left.seconds is None and missing_time_counts[("A", left.index)] > 1:
                 continue
@@ -412,7 +451,10 @@ class ADIFComparisonService:
                 add("GRID", a.grid, b.grid, "IMPORTANT", "Grid conflitante")
 
         if a.operating_mode and b.operating_mode and a.operating_mode != b.operating_mode:
-            if not self._mode_compatible(a, b):
+            if evidence.get("mode_generic_alias"):
+                add("MODE", a.operating_mode, b.operating_mode, "TOLERATED",
+                    "Fonte usa PSK genérico sem submodo; correspondência validada por UTC e frequência")
+            elif not self._mode_compatible(a, b):
                 add("MODE", a.operating_mode, b.operating_mode, "IMPORTANT", "Modo diferente no mesmo QSO pareado")
 
         freq_diff = evidence.get("freq_diff_hz")
