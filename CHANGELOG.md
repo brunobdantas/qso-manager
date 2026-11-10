@@ -1,3 +1,13 @@
+## [1.1.1] - 2026-11-09
+
+### Correção de falso QSO ausente no Club Log
+
+- Regressão LU7EAT de 02/11/2015 às 23:03 UTC: QRZ PSK31 e Club Log PSK são conciliados como um único contato quando a evidência de banda, tempo e frequência sustenta o pareamento.
+- Proteções contra confundir contatos distintos PSK31/PSK63 e FT8/FT4 ou correspondências ambíguas.
+- Precisão Maidenhead (GF05 × GF05TG) deixa de aparecer como divergência de localização.
+- `QSL_SENT` e `QSL_RCVD` não são comparados como campos cadastrais entre provedores com canais de QSL distintos.
+- Testes com registros reproduzindo o caso informado pelo usuário.
+
 ## [1.1.0] - 2026-11-09
 
 ### Integridade, inteligência e monitoramento
