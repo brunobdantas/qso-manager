@@ -31,6 +31,9 @@ class V8OnlineService:
     _provider_sync_locks: Dict[str, threading.Lock] = {}
     SYNC_PROVIDERS = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW")
     DISPLAY_ORDER = ("QRZ", "WRL", "CLUBLOG", "EQSL", "EQSL_INBOX", "LOTW", "HRDLOG")
+    _qsl_analysis_lock = threading.RLock()
+    _qsl_analysis_signature = None
+    _qsl_analysis_cache = None
 
     LABELS = {
         "QRZ": "QRZ",
@@ -342,7 +345,63 @@ class V8OnlineService:
         # The workspace shares our snapshot root/credentials.
         return QSOManagerWorkspace(hub=self.hub)
 
+    def _qsl_signature(self):
+        return (str(self.snapshots.root.resolve()),) + tuple(
+            (provider, self.snapshots.summary(provider).get("downloaded_at"), self.snapshots.summary(provider).get("records"))
+            for provider in ("QRZ", "EQSL_INBOX", "LOTW")
+        )
+
     def qsl_analysis(self) -> Dict[str, Any]:
+        signature = self._qsl_signature()
+        with self._qsl_analysis_lock:
+            if self.__class__._qsl_analysis_signature == signature and self.__class__._qsl_analysis_cache is not None:
+                return self.__class__._qsl_analysis_cache
+            result = self._compute_qsl_analysis()
+            self.__class__._qsl_analysis_signature = signature
+            self.__class__._qsl_analysis_cache = result
+            return result
+
+    def qsl_page(
+        self,
+        page: int = 1,
+        page_size: int = 100,
+        service: str = "",
+        q: str = "",
+    ) -> Dict[str, Any]:
+        result = self.qsl_analysis()
+        proposals = list(result.get("proposals") or [])
+        requested_service = str(service or "").strip().upper()
+        search = str(q or "").strip().upper()
+        services = sorted({str(item.get("service") or "").upper() for item in proposals if item.get("service")})
+        filtered = [
+            item for item in proposals
+            if (not requested_service or str(item.get("service") or "").upper() == requested_service)
+            and (
+                not search
+                or search in str((item.get("qso") or {}).get("call") or "").upper()
+                or search in str(item.get("reason") or "").upper()
+            )
+        ]
+        page_size = max(10, min(int(page_size), 200))
+        pages = max(1, (len(filtered) + page_size - 1) // page_size)
+        page = max(1, min(int(page), pages))
+        start = (page - 1) * page_size
+        return {
+            "ready": bool(result.get("ready")),
+            "summary": result.get("summary") or {},
+            "proposals": filtered[start:start + page_size],
+            "services": services,
+            "filters": {"service": requested_service, "q": search},
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "pages": pages,
+                "total": len(proposals),
+                "filtered_total": len(filtered),
+            },
+        }
+
+    def _compute_qsl_analysis(self) -> Dict[str, Any]:
         qrz = self.snapshots.load("QRZ").get("records") or []
         if not qrz:
             return {
@@ -389,7 +448,14 @@ class V8OnlineService:
         result["ready"] = True
         return result
 
-    def issues(self, limit: int = 100, qsl_result: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    def issues(
+        self,
+        limit: int = 100,
+        qsl_result: Optional[Dict[str, Any]] = None,
+        offset: int = 0,
+        kind: str = "",
+        q: str = "",
+    ) -> Dict[str, Any]:
         rows, _ = self._workspace()._cached()
         active_logs = set(self._workspace().active_providers())
         configured_logs = {
@@ -398,11 +464,14 @@ class V8OnlineService:
         }
         issues = []
         informational = 0
-        counts = {"missing": 0, "differences": 0, "duplicates": 0}
+        counts = {"missing": 0, "differences": 0, "duplicates": 0, "awaiting_refresh": 0}
         for row in rows:
-            missing = [p for p in row.get("missing_in", []) if p in configured_logs]
+            missing = [p for p in row.get("actionable_missing_in", row.get("missing_in", [])) if p in configured_logs]
+            awaiting_refresh = [p for p in row.get("stale_missing_in", []) if p in configured_logs]
             types = []
             messages = []
+            if awaiting_refresh:
+                counts["awaiting_refresh"] += 1
             if missing:
                 types.append("MISSING")
                 messages.append("Ausente em " + ", ".join(missing))
@@ -434,20 +503,32 @@ class V8OnlineService:
                 "message": " · ".join(messages),
                 "sources": row.get("providers", []),
                 "missing_in": missing,
+                "awaiting_refresh": awaiting_refresh,
                 "difference_fields": row.get("difference_fields") or [],
             })
         limit = max(1, min(int(limit), 1000))
+        offset = max(0, int(offset))
+        requested_kind = str(kind or "").strip().upper()
+        search = str(q or "").strip().upper()
+        filtered = [
+            item for item in issues
+            if (not requested_kind or requested_kind == "ALL" or requested_kind in item.get("types", []))
+            and (not search or search in item.get("call", "").upper() or search in item.get("message", "").upper())
+        ]
         qsl_detected = sum(1 for row in rows if row.get("confirmed"))
         return {
             "total": len(issues),
+            "filtered_total": len(filtered),
             "counts": {
                 **counts,
                 "informational": informational,
                 "qsl": qsl_detected,
             },
-            "items": issues[:limit],
-            "truncated": len(issues) > limit,
-            "definition": "Um item por QSO; QSL e diferenças somente informativas não entram nas pendências.",
+            "items": filtered[offset:offset + limit],
+            "offset": offset,
+            "limit": limit,
+            "truncated": len(filtered) > offset + limit,
+            "definition": "Um item por QSO; QSL, diferenças somente informativas e ausências em snapshots desatualizados não entram nas pendências acionáveis.",
         }
 
     def dashboard(self) -> Dict[str, Any]:

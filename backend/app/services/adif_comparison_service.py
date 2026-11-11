@@ -13,6 +13,7 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..adif.parser import ADIFParser
 from ..models.models import CoverageType
+from .frequency_normalization import normalize_frequency_mhz
 
 
 @dataclass
@@ -25,6 +26,7 @@ class QSO:
     time: Optional[str]
     band: Optional[str]
     freq_hz: Optional[int]
+    frequency_unit_corrected: bool
     mode: Optional[str]
     submode: Optional[str]
     operating_mode: Optional[str]
@@ -137,11 +139,9 @@ class ADIFComparisonService:
             mode = str(record.get("MODE") or "").strip().upper() or None
             submode = str(record.get("SUBMODE") or "").strip().upper() or None
             operating_mode, mode_family = self.parser.classify_mode(mode or "", submode)
-            freq = record.get("FREQ")
-            try:
-                freq_hz = round(float(freq) * 1_000_000) if freq is not None else None
-            except (TypeError, ValueError):
-                freq_hz = None
+            band = str(record.get("BAND")).upper() if record.get("BAND") else None
+            freq_mhz, frequency_unit_corrected = normalize_frequency_mhz(record.get("FREQ"), band)
+            freq_hz = round(freq_mhz * 1_000_000) if freq_mhz is not None else None
             out.append(QSO(
                 side=side,
                 index=idx,
@@ -149,8 +149,9 @@ class ADIFComparisonService:
                 call=call,
                 date=date,
                 time=record.get("TIME_ON"),
-                band=(str(record.get("BAND")).upper() if record.get("BAND") else None),
+                band=band,
                 freq_hz=freq_hz,
+                frequency_unit_corrected=frequency_unit_corrected,
                 mode=mode,
                 submode=submode,
                 operating_mode=(operating_mode or None),
@@ -237,7 +238,21 @@ class ADIFComparisonService:
         if (not mode_ok and a.operating_mode and b.operating_mode and
                 (a.operating_mode in digital or b.operating_mode in digital)):
             return None
-        freq_ok = freq_diff is None or freq_diff <= tolerance
+        # Some eQSL exports contain a GHz-looking value rounded to four
+        # decimals (for example 0.0249 on 12 m). After the unambiguous x1000
+        # repair that value is only precise to roughly 100 kHz. Accept the
+        # repaired frequency only with exact independent evidence: same band,
+        # compatible mode and UTC within two seconds. Different digital modes
+        # remain blocked above.
+        corrected_unit_alias = (
+            freq_diff is not None
+            and (a.frequency_unit_corrected or b.frequency_unit_corrected)
+            and a.band and b.band and a.band == b.band
+            and mode_ok
+            and time_diff is not None and time_diff <= 2
+            and freq_diff <= 50_000
+        )
+        freq_ok = freq_diff is None or freq_diff <= tolerance or corrected_unit_alias
 
         # A very tight call/date/time/frequency match can still be the same QSO
         # when one source labels the mode differently; keep it as a field conflict.
@@ -266,7 +281,8 @@ class ADIFComparisonService:
         if freq_diff is None:
             score -= 3
         else:
-            score -= min(15.0, (freq_diff / max(tolerance, 1)) * 15.0)
+            effective_tolerance = 50_000 if corrected_unit_alias else tolerance
+            score -= min(15.0, (freq_diff / max(effective_tolerance, 1)) * 15.0)
         if not mode_ok:
             score -= 20
         return {
@@ -275,6 +291,7 @@ class ADIFComparisonService:
             "freq_diff_hz": freq_diff,
             "mode_compatible": mode_ok,
             "mode_generic_alias": psk_generic_alias,
+            "frequency_unit_corrected": corrected_unit_alias,
             "score": round(score, 1),
         }
 
@@ -461,7 +478,12 @@ class ADIFComparisonService:
 
         freq_diff = evidence.get("freq_diff_hz")
         if freq_diff and freq_diff > 100:
-            soft.append({**base, "field": "FREQ", "value_a": a.freq_hz / 1_000_000 if a.freq_hz else None, "value_b": b.freq_hz / 1_000_000 if b.freq_hz else None, "severity": "TOLERATED", "reason": f"Diferença de {freq_diff} Hz dentro da tolerância de pareamento"})
+            reason = (
+                f"Diferença de {freq_diff} Hz após correção inequívoca de unidade; pareamento confirmado por banda, modo e UTC"
+                if evidence.get("frequency_unit_corrected") else
+                f"Diferença de {freq_diff} Hz dentro da tolerância de pareamento"
+            )
+            soft.append({**base, "field": "FREQ", "value_a": a.freq_hz / 1_000_000 if a.freq_hz else None, "value_b": b.freq_hz / 1_000_000 if b.freq_hz else None, "severity": "TOLERATED", "reason": reason})
         time_diff = evidence.get("time_diff_seconds")
         if time_diff and time_diff > 2:
             soft.append({**base, "field": "TIME_ON", "value_a": a.time, "value_b": b.time, "severity": "TOLERATED", "reason": f"Diferença de {time_diff} s dentro da tolerância de 60 s"})

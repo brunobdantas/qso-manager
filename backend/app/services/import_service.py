@@ -240,9 +240,13 @@ class ADIFImportService:
         submode = record.get('SUBMODE', '')
         operating_mode, mode_family = self.parser.classify_mode(mode, submode)
         
-        # Convert frequency from MHz (ADIF) to Hz for storage
-        freq_mhz = record.get('FREQ')
-        freq_hz = int(float(freq_mhz) * 1_000_000) if freq_mhz else None
+        # ADIF uses MHz. Repair only an unambiguous factor-of-1000 export error
+        # when the declared BAND proves the intended unit.
+        from .frequency_normalization import normalize_frequency_mhz
+        freq_mhz, _frequency_unit_corrected = normalize_frequency_mhz(
+            record.get('FREQ'), record.get('BAND')
+        )
+        freq_hz = round(freq_mhz * 1_000_000) if freq_mhz is not None else None
         
         return NormalizedQSO(
             raw_qso_id=raw_qso_id,

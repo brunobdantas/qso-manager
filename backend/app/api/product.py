@@ -72,13 +72,42 @@ def dashboard():
 
 
 @router.get("/issues")
-def issues(limit: int = Query(default=250, ge=1, le=1000)):
-    return _run(lambda: V9ProductService().issues(limit=limit))
+def issues(
+    limit: int = Query(default=250, ge=1, le=1000),
+    page: int = Query(default=1, ge=1),
+    page_size: int | None = Query(default=None, ge=10, le=200),
+    kind: str = "",
+    q: str = "",
+):
+    size = page_size or limit
+    result = _run(lambda: V9ProductService().issues(
+        limit=size,
+        offset=(page - 1) * size,
+        kind=kind,
+        q=q,
+    ))
+    filtered_total = int(result.get("filtered_total") or 0)
+    result.update({
+        "page": page,
+        "page_size": size,
+        "pages": max(1, (filtered_total + size - 1) // size),
+    })
+    return result
 
 
 @router.get("/qsl")
-def qsl():
-    return _run(lambda: V9ProductService().qsl_analysis())
+def qsl(
+    page: int = Query(default=1, ge=1),
+    page_size: int = Query(default=100, ge=10, le=200),
+    service: str = "",
+    q: str = "",
+):
+    return _run(lambda: V9ProductService().qsl_page(
+        page=page,
+        page_size=page_size,
+        service=service,
+        q=q,
+    ))
 
 
 @router.get("/export/reference")

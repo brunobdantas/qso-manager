@@ -18,6 +18,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 from ..adapters.cloud_logs import PROVIDERS, records_to_adif
 from .cloud_hub_fast_service import CloudHubService
 from .fast_adif_comparison_service import FastADIFComparisonService
+from .source_freshness import classify_snapshot_freshness
 from .source_scope_store import SourceScopeStore
 
 
@@ -177,14 +178,16 @@ class QSOManagerWorkspace:
 
     def _build_rows(self) -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
         active = self.active_providers()
+        summaries = {provider: self.hub.snapshots.summary(provider) for provider in self.PROVIDER_ORDER}
         snapshots: Dict[str, List[Dict[str, Any]]] = {
             provider: list((self.hub.snapshots.load(provider).get("records") or [])) if provider in active else []
             for provider in self.PROVIDER_ORDER
         }
         available = [
             provider for provider in active
-            if self.hub.snapshots.summary(provider).get("downloaded_at") is not None
+            if summaries[provider].get("downloaded_at") is not None
         ]
+        freshness = classify_snapshot_freshness(summaries, available)
         normalized = {
             provider: self.comparator._normalize(rows, provider)
             for provider, rows in snapshots.items()
@@ -269,6 +272,15 @@ class QSOManagerWorkspace:
                 if 0 <= index < len(snapshots.get(provider) or [])
             }
             missing_in = [provider for provider in available if provider not in refs]
+            stale_missing_in = [
+                provider for provider in missing_in
+                # Only a source trailing the newest comparison snapshot makes
+                # an absence non-actionable. If every source is equally old,
+                # the historical comparison is still internally consistent;
+                # the Sources page warns about age without hiding its issues.
+                if (freshness.get(provider) or {}).get("stale_by_lag")
+            ]
+            actionable_missing_in = [provider for provider in missing_in if provider not in stale_missing_in]
             differences = self._field_differences(refs, snapshots)
             difference_severity = self._difference_severity(mode, differences)
             confirmation_sources = self._confirmation_sources(refs, snapshots)
@@ -302,6 +314,8 @@ class QSOManagerWorkspace:
                 "canonical_index": canonical_index,
                 "providers": [p for p in self.PROVIDER_ORDER if p in refs],
                 "missing_in": missing_in,
+                "actionable_missing_in": actionable_missing_in,
+                "stale_missing_in": stale_missing_in,
                 "provider_count": len(refs),
                 "refs": refs,
                 "source_records": source_payloads,
@@ -385,6 +399,26 @@ class QSOManagerWorkspace:
             return None
         return str(value).lower() in {"1", "true", "yes", "y"}
 
+    @staticmethod
+    def _provider_filter(value: str) -> str:
+        """Accept provider codes and the human labels emitted by the UI.
+
+        Native ``<option>`` elements use their visible text as the value when
+        an explicit value is missing.  Keeping this compatibility layer makes
+        saved links and older frontends deterministic while v1.1.4 migrates to
+        coded option values.
+        """
+        text = str(value or "").strip().upper()
+        aliases = {
+            "WORLD RADIO LEAGUE": "WRL",
+            "CLUB LOG": "CLUBLOG",
+            "EQSL OUTBOX": "EQSL",
+            "EQSL INBOX": "EQSL_INBOX",
+            "HRDLOG.NET": "HRDLOG",
+            "HAM RADIO DELUXE": "HRD",
+        }
+        return aliases.get(text, text)
+
     def _filtered(
         self,
         *,
@@ -408,8 +442,8 @@ class QSOManagerWorkspace:
         band = band.strip().upper()
         mode = mode.strip().upper()
         country = country.strip().upper()
-        provider = provider.strip().upper()
-        missing_in = missing_in.strip().upper()
+        provider = self._provider_filter(provider)
+        missing_in = self._provider_filter(missing_in)
         qrz = qrz.strip().lower()
         dup_value = self._bool_filter(duplicate)
         diff_value = self._bool_filter(differences)

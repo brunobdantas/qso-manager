@@ -31,6 +31,7 @@ from ..models.models import (
     Source,
 )
 from ..reconciliation.engine import NormalizedQSOData, ReconciliationEngine, ReconciliationResult
+from .frequency_normalization import normalize_frequency_hz
 
 
 class ReconciliationService:
@@ -52,7 +53,7 @@ class ReconciliationService:
                     qso_date=nq.qso_date,
                     time_on=nq.time_on,
                     band=nq.band,
-                    freq_hz=nq.freq_hz,
+                    freq_hz=normalize_frequency_hz(nq.freq_hz, nq.band)[0],
                     mode=nq.mode,
                     submode=nq.submode,
                     operating_mode=nq.operating_mode,

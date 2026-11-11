@@ -1,8 +1,8 @@
-# Capacidades de escrita das APIs — v1.1.3
+# Capacidades de escrita das APIs — v1.1.4
 
 Pesquisa consolidada em 10/11/2026. A regra do produto é conservadora: uma operação só aparece quando existe documentação pública ou código-fonte primário que demonstre o contrato. Ausência de API não é contornada com automação de tela nem com edição direta de banco proprietário.
 
-| Plataforma | Ler | Criar | Editar | Excluir | Implementação na v1.1.3 |
+| Plataforma | Ler | Criar | Editar | Excluir | Implementação na v1.1.4 |
 | --- | :---: | :---: | :---: | :---: | --- |
 | QRZ Logbook | ✅ | ✅ | ✅ | ✅ | `FETCH`, `INSERT`, `INSERT OPTION=REPLACE` e `DELETE LOGIDS`; edição restrita a metadados seguros |
 | World Radio League | ✅ | ✅ | ✅ | ✅ | `GET/POST /v1/contacts`, `PATCH/DELETE /v1/contacts/{id}` |
@@ -44,5 +44,5 @@ Pesquisa consolidada em 10/11/2026. A regra do produto é conservadora: uma oper
 
 - A API do HRDLog não fornece leitura completa do log. Alterações realizadas diretamente no site só entram no QSO Manager após nova reconciliação ADIF.
 - O Club Log não fornece edição genérica em tempo real; usar exclusão + inclusão automaticamente seria uma operação composta não atômica e, por isso, não é apresentada como `UPDATE`.
-- O `REPLACE` do QRZ pode sobrescrever confirmações se um cliente remontar o ADIF de forma ingênua. A v1.1.3 parte do ADIF vivo retornado pelo QRZ, altera somente o campo autorizado e verifica o resultado.
+- O `REPLACE` do QRZ pode sobrescrever confirmações se um cliente remontar o ADIF de forma ingênua. A v1.1.4 parte do ADIF vivo retornado pelo QRZ, altera somente o campo autorizado e verifica o resultado.
 - eQSL oferece exclusão na interface web, mas não há contrato público de API equivalente; a função permanece indisponível no aplicativo.

@@ -202,3 +202,14 @@ The project follows semantic versioning for production releases.
 - Análise QSL sob demanda para reduzir o custo da inicialização.
 - Instalador, pacote portátil e checksums produzidos pela mesma esteira Windows validada.
 
+## [1.1.4] - 2026-11-11
+
+### Usabilidade, escala e confiança das comparações
+
+- Normalização conservadora de `FREQ` por banda para corrigir apenas erros inequívocos de unidade (MHz ×/÷ 1.000), incluindo a regressão real 0,0249 × 24,915 MHz em 12 m.
+- Paginação, busca e filtro no servidor para pendências e propostas QSL; a interface deixa de renderizar milhares de cartões de uma vez.
+- Seleção em massa com escopo explícito: página atual ou todos os resultados filtrados, com confirmação antes de selecionar todo o universo.
+- Classificação de snapshots em atual, desatualizado ou não carregado; uma ausência baseada em fonte antiga aguarda sincronização em vez de gerar pendência acionável.
+- Filtros por período, fontes com nomes amigáveis, cartões de pendência navegáveis, dicas de contexto e melhorias de teclado/leitores de tela.
+- Cache da análise QSL por assinatura dos snapshots para que a paginação não recalcule toda a conciliação a cada página.
+
