@@ -17,6 +17,7 @@ from ..core.version import __version__
 from .eqsl_qrz_sync_service import EqslQrzSyncService
 from .bootstrap_cache_service import BootstrapCache
 from .qso_manager_workspace import QSOManagerWorkspace
+from .source_freshness import classify_snapshot_freshness
 from .source_scope_store import SourceScopeStore
 from .v8_online_service import V8OnlineService
 
@@ -84,6 +85,12 @@ class V9ProductService(V8OnlineService):
                 **row,
                 "scope": scope,
                 "participates": scope == SourceScopeStore.ACTIVE,
+                "snapshot_loaded": snapshot_ready,
+                "connection_state": (
+                    "LOCAL" if provider == "HRD"
+                    else "CONFIGURED" if configured
+                    else "NOT_CONFIGURED"
+                ),
                 "read_state": (
                     "OUT_OF_SCOPE" if scope != SourceScopeStore.ACTIVE
                     else "READY" if snapshot_ready
@@ -96,6 +103,19 @@ class V9ProductService(V8OnlineService):
                 ),
             }
             rows.append(row)
+        summaries = {row["provider"]: row.get("snapshot") or {} for row in rows}
+        freshness = classify_snapshot_freshness(summaries, summaries.keys())
+        rows = [
+            {
+                **row,
+                "snapshot_state": (freshness.get(row["provider"]) or {}).get("state", "NOT_LOADED"),
+                "snapshot_age_hours": (freshness.get(row["provider"]) or {}).get("age_hours"),
+                "snapshot_lag_hours": (freshness.get(row["provider"]) or {}).get("lag_hours"),
+                "snapshot_stale_by_age": bool((freshness.get(row["provider"]) or {}).get("stale_by_age")),
+                "snapshot_stale_by_lag": bool((freshness.get(row["provider"]) or {}).get("stale_by_lag")),
+            }
+            for row in rows
+        ]
         order = {name: i for i, name in enumerate(self.DISPLAY_ORDER)}
         rows.sort(key=lambda row: order.get(row.get("provider"), 999))
         return {

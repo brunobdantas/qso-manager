@@ -5,9 +5,17 @@
 [![Integrations](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release3-integrations.yml)
 [![Windows](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml/badge.svg)](https://github.com/brunobdantas/qso-manager/actions/workflows/release4-windows-installer.yml)
 
-**PU2BRU QSO Manager v1.1.3** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
+**PU2BRU QSO Manager v1.1.4** é um gerenciador local-first para radioamadorismo que consolida, compara e reconcilia QSOs entre múltiplos logbooks, com foco em integridade de dados e escritas remotas auditáveis.
 
-> **Status:** Windows 11 é o alvo de produção da v1.1.3. O aplicativo Android é um companion em preview e não executa as rotinas remotas de CRUD.
+> **Status:** Windows 11 é o alvo de produção da v1.1.4. O aplicativo Android é um companion em preview e não executa as rotinas remotas de CRUD.
+
+## Novidades v1.1.4 — usabilidade e confiança operacional
+
+- Corrige falsos desencontros quando uma fonte fornece frequência em GHz ou kHz, usando a banda declarada para reparar apenas erros inequívocos de fator 1.000.
+- Pagina as pendências e as propostas QSL, com pesquisa e filtros no servidor, evitando milhares de elementos simultâneos na tela.
+- Separa **selecionar esta página** de **selecionar todos os resultados**, com confirmação explícita para operações em massa.
+- Identifica snapshots atuais, desatualizados e ainda não carregados; ausências em fontes antigas deixam de inflar a fila acionável.
+- Torna os cartões de pendência navegáveis e melhora rótulos, foco por teclado, estados de fonte e contexto das propostas eQSL/LoTW.
 
 ## Novidades v1.1.3 — CRUD auditado dos logbooks
 
